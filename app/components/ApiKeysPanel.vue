@@ -37,12 +37,14 @@ const EXPIRY_OPTIONS = [
 // One toggle per permission, in the order they are advertised to a client.
 const PERMISSIONS = [
   { scope: 'boards:read', label: 'Read boards', description: 'Boards, tasks and updates' },
-  { scope: 'boards:write', label: 'Write boards', description: 'Create, edit, move and delete' }
+  { scope: 'boards:write', label: 'Write boards', description: 'Create, edit, move and delete' },
+  { scope: 'secrets:read', label: 'Read project secrets', description: 'Names of a project\'s secrets and its .env text, values included. Every read is recorded in the project\'s trail' },
+  { scope: 'secrets:write', label: 'Write project secrets', description: 'Add, change and delete a project\'s secrets by name, where this person is a project manager' }
 ] as const
 
 const newName = ref('')
 const granted = ref<Record<string, boolean>>(
-  Object.fromEntries(PERMISSIONS.map(permission => [permission.scope, true]))
+  Object.fromEntries(PERMISSIONS.map(permission => [permission.scope, permission.scope.startsWith('boards:')]))
 )
 const expiresInDays = ref(0)
 const creating = ref(false)

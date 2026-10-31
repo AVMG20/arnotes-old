@@ -92,6 +92,20 @@ in inline Markdown.
   \`move_task\`. Say what you are deleting before you delete it, and restore a
   mistake rather than recreating it — a restored task keeps its updates.
 
+## Secrets
+
+A project can keep its secrets (environment variables such as API keys) in a
+vault. With the \`secrets:read\` and \`secrets:write\` permissions:
+
+- \`list_project_secrets\` gives the names, never the values.
+- \`get_project_env\` gives the \`.env\` text for what the user may read. The server
+  cannot write files for you: write that text to the project's \`.env\` yourself, and
+  make sure the file is git-ignored.
+- \`set_project_secrets\` adds or changes secrets by name, one or many, and
+  \`delete_project_secret\` removes one. Only project managers may change them.
+
+Never put a value into a task, a message or chat.
+
 ## Habits
 
 - Ground every answer about the boards in what the tools returned; never guess

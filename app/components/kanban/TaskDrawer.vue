@@ -680,7 +680,7 @@ const menuItems = computed(() => [[
         </div>
 
         <!-- Header: state, breadcrumb, actions -->
-        <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
+        <header class="flex flex-wrap shrink-0 items-center gap-x-2 gap-y-1.5 border-b border-default px-4 py-2.5">
           <!-- The button borrows the menu's own padding and gap (6px each) so
                that with the menu flush against it, its dot and label sit on the
                same two vertical lines as every dot and label in the list.
@@ -811,7 +811,9 @@ const menuItems = computed(() => [[
         </header>
 
         <!-- Title + labels + description -->
-        <div class="flex min-h-0 flex-1 flex-col">
+        <!-- Everything below the header scrolls as one on a short screen (a phone), with
+             the description kept at a usable height instead of squeezed to its toolbar. -->
+        <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
           <div class="shrink-0 px-5 pb-3 pt-4">
             <UTextarea
               v-model="titleDraft"
@@ -996,7 +998,7 @@ const menuItems = computed(() => [[
           />
 
           <!-- Description: the rich-text editor, bounded so it keeps its own scroll -->
-          <div class="flex min-h-0 flex-1 flex-col border-t border-default">
+          <div class="flex min-h-72 flex-1 flex-col border-t border-default">
             <div
               v-if="readonly"
               class="min-h-0 flex-1 overflow-y-auto"

@@ -24,12 +24,22 @@ let
     set -euo pipefail
     state_dir="$1"
     secret_file="$state_dir/data/.auth-secret"
+    key_file="$state_dir/data/.secrets-key"
     env_file="$state_dir/env"
     umask 077
     if [ ! -s "$secret_file" ]; then
       ${pkgs.openssl}/bin/openssl rand -hex 32 > "$secret_file"
     fi
-    printf 'BETTER_AUTH_SECRET=%s\n' "$(tr -d '\n' < "$secret_file")" > "$env_file"
+    if [ ! -s "$key_file" ]; then
+      ${pkgs.openssl}/bin/openssl rand -hex 32 > "$key_file"
+    fi
+    : > "$env_file"
+    ${lib.optionalString (cfg.betterAuth.secretFile == null) ''
+      printf 'BETTER_AUTH_SECRET=%s\n' "$(tr -d '\n' < "$secret_file")" >> "$env_file"
+    ''}
+    ${lib.optionalString (cfg.secrets.keyFile == null) ''
+      printf 'SECRETS_ENCRYPTION_KEY=%s\n' "$(tr -d '\n' < "$key_file")" >> "$env_file"
+    ''}
   '';
 
   # Runs at service start, not evaluation, so the GitHub token and webhook secret
@@ -85,6 +95,9 @@ let
   // lib.optionalAttrs (cfg.betterAuth.secretFile != null) {
     BETTER_AUTH_SECRET = lib.trim (lib.readFile cfg.betterAuth.secretFile);
   }
+  // lib.optionalAttrs (cfg.secrets.keyFile != null) {
+    SECRETS_ENCRYPTION_KEY = lib.trim (lib.readFile cfg.secrets.keyFile);
+  }
   // lib.optionalAttrs (cfg.push.privateKeyFile != null) {
     VAPID_PRIVATE_KEY = lib.trim (lib.readFile cfg.push.privateKeyFile);
   };
@@ -128,7 +141,7 @@ in
     stateDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/arnotes";
-      description = "State directory holding attachments and the generated auth secret.";
+      description = "State directory holding attachments and the generated auth and secrets keys.";
     };
 
     database = {
@@ -175,6 +188,14 @@ in
         type = lib.types.nullOr lib.types.path;
         default = null;
         description = "File containing a stable 32+ character secret. When null, one is generated into the state dir on first start.";
+      };
+    };
+
+    secrets = {
+      keyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = "File containing the SECRETS_ENCRYPTION_KEY for project secrets: 64 hex characters from openssl rand -hex 32. When null, one is generated into the state dir on first start. Read when the configuration is evaluated, so the key ends up in the world-readable Nix store, like betterAuth.secretFile. Keep a copy apart from the database: losing it makes every stored secret unreadable.";
       };
     };
 
@@ -444,7 +465,7 @@ in
         ReadWritePaths = cfg.stateDir;
       };
       environment = appEnvironment;
-      serviceConfig.EnvironmentFile = lib.mkIf (cfg.betterAuth.secretFile == null) "-${cfg.stateDir}/env";
+      serviceConfig.EnvironmentFile = lib.mkIf (cfg.betterAuth.secretFile == null || cfg.secrets.keyFile == null) "-${cfg.stateDir}/env";
     };
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];

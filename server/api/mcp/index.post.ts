@@ -5,6 +5,7 @@
 import { authenticateApiKey, hasScope } from '../../utils/api-keys'
 import type { ApiKeyContext } from '../../utils/api-keys'
 import { toolsForScopes } from '../../utils/mcpRegistry'
+import { recordAgentAction } from '../../utils/agentAudit'
 import { McpToolError } from '../../utils/mcpToolKit'
 import { API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
@@ -165,6 +166,8 @@ async function handleMessage(message: JsonRpcMessage, context: ApiKeyContext) {
       try {
         const value = await tool.handler(asRecord(params.arguments), context)
         if (!tool.readOnly) announceWrite(tool, value, context)
+        // Only what succeeded is recorded; the recording never fails or slows the call.
+        if (tool.audit ?? !tool.readOnly) void recordAgentAction(tool, asRecord(params.arguments), value, context)
         // Compact rather than indented: a model reads either the same, and the
         // whitespace is a fifth of a large board's payload.
         return result(id, { content: [{ type: 'text', text: JSON.stringify(value) }] })

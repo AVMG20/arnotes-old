@@ -21,6 +21,11 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
     match: tool => /_rules?$|_rule_runs$/.test(tool.name),
     note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired.'
   },
+  {
+    title: 'Secrets',
+    match: tool => /secret|_env$/.test(tool.name),
+    note: 'A project\'s secrets are environment variables, kept encrypted. Only project managers change them, reading a value is recorded in the project\'s trail, and a list never carries values. Never echo a value into a task, a message or chat: keep the values in the project\'s .env file, whose text get_project_env returns.'
+  },
   { title: 'Goals and portfolios', match: tool => /_(goals?|portfolios?)$/.test(tool.name) },
   { title: 'Status updates', match: tool => /status_update/.test(tool.name) },
   { title: 'Messages', match: tool => /message/.test(tool.name) && !/notification/.test(tool.name) },
@@ -69,6 +74,8 @@ Settings, chooses its permissions and can revoke it at any time:
 
 - \`boards:read\` lets you read.
 - \`boards:write\` lets you change things.
+- \`secrets:read\` lets you list a project's secrets and get its .env text.
+- \`secrets:write\` lets you add, change and delete a project's secrets (managers only).
 
 A key belongs to one workspace (their personal one, or one team). Never print the
 key, put it in a file you commit, or paste it into a task or message.

@@ -38,6 +38,8 @@ export function isApiKeyScope(value: unknown): value is ApiKeyScope {
 
 export interface ApiKeyContext {
   keyId: string
+  /** The name the key was given, as the owner sees it in the agent audit. */
+  keyName: string
   userId: string
   /** The single workspace this key may touch; null for the owner's personal workspace. */
   teamId: string | null
@@ -98,6 +100,7 @@ export async function authenticateApiKey(event: H3Event): Promise<ApiKeyContext>
 
   return {
     keyId: key.id,
+    keyName: key.name,
     userId: key.userId,
     teamId: key.teamId,
     scopes: key.scopes.filter(isApiKeyScope)

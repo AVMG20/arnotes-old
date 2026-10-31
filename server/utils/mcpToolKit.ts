@@ -10,6 +10,11 @@ export interface McpToolDefinition {
   scope: ApiKeyScope
   /** Advertised to clients so they can surface which tools change data. */
   readOnly: boolean
+  /**
+   * Recorded in the agent audit for the key's owner. Defaults to every write
+   * (`!readOnly`); a read that touches secrets sets it.
+   */
+  audit?: boolean
   /** The staff-only collection a write tool changes, so the views showing it update live. */
   resource?: ProjectResource
   /** The workspace-wide list a write tool changes (goals, portfolios), so the pages showing it update live. */

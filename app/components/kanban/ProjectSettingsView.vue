@@ -11,6 +11,8 @@ const SECTIONS = [
   { key: 'general', label: 'General', icon: 'i-lucide-sliders-horizontal' },
   { key: 'repositories', label: 'Repositories', icon: 'i-lucide-git-branch' },
   { key: 'rules', label: 'Rules', icon: 'i-lucide-workflow' },
+  { key: 'members', label: 'Members', icon: 'i-lucide-users' },
+  { key: 'secrets', label: 'Secrets', icon: 'i-lucide-lock-keyhole' },
   { key: 'fields', label: 'Custom fields', icon: 'i-lucide-list-plus' }
 ] as const
 
@@ -130,8 +132,18 @@ function dropField(fieldId: string) {
           :project-id="projectId"
           class="mt-4"
         />
+        <KanbanProjectMembersSettings
+          v-else-if="section === 'members'"
+          class="mt-4"
+          :project-id="projectId"
+        />
+        <KanbanProjectSecretsSettings
+          v-else-if="section === 'secrets'"
+          class="mt-4"
+          :project-id="projectId"
+        />
         <section
-          v-else
+          v-else-if="section === 'fields'"
           class="mt-4"
           data-custom-fields
         >

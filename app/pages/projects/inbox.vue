@@ -2,8 +2,8 @@
 import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
 import { dueDayToMs } from '~/utils/dueDate'
-import { notificationLink } from '~/composables/useNotifications'
-import type { NotificationItem } from '~/composables/useNotifications'
+import { agentAuditLink } from '~/composables/useAgentAudit'
+import type { AgentAuditItem } from '~/composables/useAgentAudit'
 
 definePageMeta({ layout: 'app' })
 
@@ -13,18 +13,30 @@ useSeoMeta({ title: 'Inbox' })
 const { items, unread, prefs, push, loaded, load, markRead, markAllRead, setPreference, setPush, testPush } = useNotifications()
 onMounted(load)
 
+// The Agent audit tab exists only for someone with an agent; ?tab=agent keeps it across a reload.
+const audit = useAgentAudit()
+const { items: auditItems, unread: auditUnread, hasAgents, loaded: auditLoaded, load: loadAudit, markRead: markAuditRead, markAllRead: markAllAuditRead } = audit
+onMounted(loadAudit)
+const route = useRoute()
+const router = useRouter()
+const onAgentTab = computed(() => hasAgents.value && route.query.tab === 'agent')
+
 const filter = ref<'all' | 'unread'>('all')
 const shown = computed(() => filter.value === 'unread' ? items.value.filter(item => !item.readAt) : items.value)
 
 // Grouped by the day they arrived, newest day first.
-const byDay = computed(() => {
-  const groups = new Map<string, NotificationItem[]>()
-  for (const item of shown.value) {
+function groupByDay<T extends { createdAt: number }>(list: T[]) {
+  const groups = new Map<string, T[]>()
+  for (const item of list) {
     const day = format(item.createdAt, 'yyyy-MM-dd')
     groups.set(day, [...(groups.get(day) ?? []), item])
   }
   return [...groups]
-})
+}
+
+const byDay = computed(() => groupByDay(shown.value))
+const agentShown = computed(() => filter.value === 'unread' ? auditItems.value.filter(item => !item.readAt) : auditItems.value)
+const agentByDay = computed(() => groupByDay(agentShown.value))
 
 function dayLabel(day: string) {
   const today = format(Date.now(), 'yyyy-MM-dd')
@@ -37,6 +49,19 @@ function dayLabel(day: string) {
 async function open(item: NotificationItem) {
   if (!item.readAt) markRead([item.id])
   await navigateTo(notificationLink(item))
+}
+
+function selectTab(tab: 'inbox' | 'agent') {
+  const query = { ...route.query }
+  if (tab === 'agent') query.tab = 'agent'
+  else delete query.tab
+  router.replace({ query })
+}
+
+async function openAgent(item: AgentAuditItem) {
+  if (!item.readAt) markAuditRead([item.id])
+  const link = agentAuditLink(item)
+  if (link) await navigateTo(link)
 }
 
 const settingsOpen = ref(false)
@@ -72,13 +97,13 @@ async function sendTest() {
         Inbox
       </h1>
       <span
-        v-if="unread"
+        v-if="!onAgentTab && unread"
         class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary"
         data-inbox-unread
       >{{ unread }} unread</span>
       <div class="ml-auto flex items-center gap-1">
         <UButton
-          v-if="unread"
+          v-if="!onAgentTab && unread"
           label="Mark all read"
           icon="i-lucide-check-check"
           size="xs"
@@ -88,6 +113,17 @@ async function sendTest() {
           @click="markAllRead"
         />
         <UButton
+          v-if="onAgentTab && auditUnread"
+          label="Mark all read"
+          icon="i-lucide-check-check"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+          data-agent-mark-all
+          @click="markAllAuditRead"
+        />
+        <UButton
+          v-if="!onAgentTab"
           icon="i-lucide-settings-2"
           size="xs"
           color="neutral"
@@ -99,10 +135,44 @@ async function sendTest() {
       </div>
     </header>
 
+    <nav
+      v-if="hasAgents"
+      class="flex shrink-0 gap-5 border-b border-default px-4 lg:px-6"
+      role="tablist"
+    >
+      <button
+        type="button"
+        role="tab"
+        class="-mb-px border-b-2 py-2 text-sm transition-colors"
+        :class="onAgentTab ? 'border-transparent text-muted hover:text-default' : 'border-primary font-medium text-default'"
+        :aria-selected="!onAgentTab"
+        data-inbox-tab
+        @click="selectTab('inbox')"
+      >
+        Inbox
+      </button>
+      <button
+        type="button"
+        role="tab"
+        class="-mb-px flex items-center gap-1.5 border-b-2 py-2 text-sm transition-colors"
+        :class="onAgentTab ? 'border-primary font-medium text-default' : 'border-transparent text-muted hover:text-default'"
+        :aria-selected="onAgentTab"
+        data-agent-tab
+        @click="selectTab('agent')"
+      >
+        Agent audit
+        <span
+          v-if="auditUnread"
+          class="rounded-full bg-primary/10 px-1.5 text-xs font-medium tabular-nums text-primary"
+          data-agent-unread
+        >{{ auditUnread }}</span>
+      </button>
+    </nav>
+
     <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
       <div class="mx-auto max-w-3xl">
         <section
-          v-if="settingsOpen"
+          v-if="settingsOpen && !onAgentTab"
           class="mb-4 rounded-xl border border-default bg-default p-4"
           data-inbox-prefs
         >
@@ -193,68 +263,142 @@ async function sendTest() {
             class="rounded-md px-2.5 py-1 text-xs capitalize transition-colors"
             :class="filter === option ? 'bg-elevated font-medium text-default' : 'text-muted hover:text-default'"
             :data-inbox-filter="option"
+            :data-agent-filter="option"
             @click="filter = option"
           >
             {{ option }}
           </button>
         </div>
 
-        <p
-          v-if="loaded && !shown.length"
-          class="rounded-xl border border-dashed border-default px-4 py-12 text-center text-sm text-muted"
-          data-inbox-empty
-        >
-          {{ filter === 'unread' ? 'You are all caught up.' : 'Nothing yet. Assignments, comments and messages for you will land here.' }}
-        </p>
+        <template v-if="!onAgentTab">
+          <p
+            v-if="loaded && !shown.length"
+            class="rounded-xl border border-dashed border-default px-4 py-12 text-center text-sm text-muted"
+            data-inbox-empty
+          >
+            {{ filter === 'unread' ? 'You are all caught up.' : 'Nothing yet. Assignments, comments and messages for you will land here.' }}
+          </p>
 
-        <section
-          v-for="[day, dayItems] in byDay"
-          :key="day"
-          class="mb-5"
-        >
-          <h3 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dimmed">
-            {{ dayLabel(day) }}
-          </h3>
-          <ul class="overflow-hidden rounded-xl border border-default bg-default">
-            <li
-              v-for="item in dayItems"
-              :key="item.id"
-              class="flex cursor-pointer items-start gap-3 border-b border-default px-3 py-3 transition-colors last:border-b-0 hover:bg-elevated/60"
-              :data-inbox-item="item.type"
-              :data-unread="item.readAt ? 'false' : 'true'"
-              @click="open(item)"
-            >
-              <span
-                class="mt-1.5 size-2 shrink-0 rounded-full"
-                :class="item.readAt ? 'bg-transparent' : 'bg-primary'"
-              />
-              <UAvatar
-                :src="item.actorImage ?? undefined"
-                :alt="item.actorName ?? 'Someone'"
-                size="xs"
-                class="mt-0.5"
-              />
-              <div class="min-w-0 flex-1">
-                <p
-                  class="text-sm"
-                  :class="item.readAt ? 'text-muted' : 'font-medium text-default'"
+          <section
+            v-for="[day, dayItems] in byDay"
+            :key="day"
+            class="mb-5"
+          >
+            <h3 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dimmed">
+              {{ dayLabel(day) }}
+            </h3>
+            <ul class="overflow-hidden rounded-xl border border-default bg-default">
+              <li
+                v-for="item in dayItems"
+                :key="item.id"
+                class="flex cursor-pointer items-start gap-3 border-b border-default px-3 py-3 transition-colors last:border-b-0 hover:bg-elevated/60"
+                :data-inbox-item="item.type"
+                :data-unread="item.readAt ? 'false' : 'true'"
+                @click="open(item)"
+              >
+                <span
+                  class="mt-1.5 size-2 shrink-0 rounded-full"
+                  :class="item.readAt ? 'bg-transparent' : 'bg-primary'"
+                />
+                <UAvatar
+                  :src="item.actorImage ?? undefined"
+                  :alt="item.actorName ?? 'Someone'"
+                  size="xs"
+                  class="mt-0.5"
+                />
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="text-sm"
+                    :class="item.readAt ? 'text-muted' : 'font-medium text-default'"
+                  >
+                    {{ item.title }}
+                  </p>
+                  <p
+                    v-if="item.body"
+                    class="mt-0.5 line-clamp-2 text-xs text-muted"
+                  >
+                    {{ item.body }}
+                  </p>
+                  <p class="mt-1 text-xs text-dimmed">
+                    {{ item.projectName }}
+                  </p>
+                </div>
+                <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(item.createdAt) }}</span>
+              </li>
+            </ul>
+          </section>
+        </template>
+        <template v-else>
+          <p
+            class="mb-4 text-xs text-muted"
+            data-agent-note
+          >
+            Agent activity is only shown here. It never sends email or push.
+          </p>
+          <p
+            v-if="auditLoaded && !agentShown.length"
+            class="rounded-xl border border-dashed border-default px-4 py-12 text-center text-sm text-muted"
+            data-agent-empty
+          >
+            {{ filter === 'unread' ? 'You are all caught up.' : 'Nothing yet. When one of your agents changes something it shows up here.' }}
+          </p>
+
+          <section
+            v-for="[day, dayItems] in agentByDay"
+            :key="day"
+            class="mb-5"
+            data-agent-day
+          >
+            <h3 class="mb-1.5 text-xs font-semibold uppercase tracking-wide text-dimmed">
+              {{ dayLabel(day) }}
+            </h3>
+            <ul class="overflow-hidden rounded-xl border border-default bg-default">
+              <li
+                v-for="item in dayItems"
+                :key="item.id"
+                class="flex items-start gap-3 border-b border-default px-3 py-3 transition-colors last:border-b-0"
+                :class="agentAuditLink(item) ? 'cursor-pointer hover:bg-elevated/60' : ''"
+                :data-agent-item="item.tool"
+                :data-unread="item.readAt ? 'false' : 'true'"
+                :data-agent-link="agentAuditLink(item) ? 'true' : 'false'"
+                @click="openAgent(item)"
+              >
+                <span
+                  class="mt-1.5 size-2 shrink-0 rounded-full"
+                  :class="item.readAt ? 'bg-transparent' : 'bg-primary'"
+                />
+                <span
+                  class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-elevated text-muted"
+                  aria-hidden="true"
                 >
-                  {{ item.title }}
-                </p>
-                <p
-                  v-if="item.body"
-                  class="mt-0.5 line-clamp-2 text-xs text-muted"
-                >
-                  {{ item.body }}
-                </p>
-                <p class="mt-1 text-xs text-dimmed">
-                  {{ item.projectName }}
-                </p>
-              </div>
-              <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(item.createdAt) }}</span>
-            </li>
-          </ul>
-        </section>
+                  <UIcon
+                    name="i-lucide-bot"
+                    class="size-4"
+                  />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <p
+                    class="text-sm"
+                    :class="item.readAt ? 'text-muted' : 'font-medium text-default'"
+                  >
+                    <span class="text-xs font-normal text-muted">{{ item.keyName }} (agent)</span>
+                    {{ item.toolTitle }}
+                  </p>
+                  <p class="mt-0.5 line-clamp-2 text-xs text-muted">
+                    {{ item.summary }}
+                  </p>
+                  <p
+                    v-if="item.projectName || item.taskTitle"
+                    class="mt-1 truncate text-xs text-dimmed"
+                  >
+                    {{ [item.projectName, item.taskTitle].filter(Boolean).join(' · ') }}
+                  </p>
+                </div>
+                <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(item.createdAt) }}</span>
+              </li>
+            </ul>
+          </section>
+        </template>
       </div>
     </div>
   </div>

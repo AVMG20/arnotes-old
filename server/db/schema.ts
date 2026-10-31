@@ -665,7 +665,7 @@ export const POPULAR_OPENROUTER_MODELS = [
 
 // Permissions a key can carry, one pair per feature. Read covers listing,
 // searching and reading; write covers everything that changes data.
-export const API_KEY_SCOPES = ['boards:read', 'boards:write'] as const
+export const API_KEY_SCOPES = ['boards:read', 'boards:write', 'secrets:read', 'secrets:write'] as const
 export type ApiKeyScope = typeof API_KEY_SCOPES[number]
 
 export const apiKeys = pgTable(
@@ -815,3 +815,113 @@ export const projectRuleRuns = pgTable(
 )
 
 export type ProjectRuleRun = typeof projectRuleRuns.$inferSelect
+
+// ─── Project members and secrets ──────────────────────────────────────────────
+
+// Who works on a project beyond the people the whole team already shares it with.
+// Being on the team is what opens a board; being a project member is what opens
+// the project's secrets. A `manager` also looks after the member list and the
+// secrets; a `member` reads the secrets that are shared with members. The project
+// owner and the team's owners and admins have manager rights without a row.
+export const PROJECT_ROLES = ['manager', 'member'] as const
+export type ProjectRole = typeof PROJECT_ROLES[number]
+
+export const projectMembers = pgTable(
+  'project_members',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role').notNull().$type<ProjectRole>(),
+    addedBy: text('added_by').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [
+    uniqueIndex('project_members_project_user_idx').on(table.projectId, table.userId),
+    index('project_members_user_id_idx').on(table.userId)
+  ]
+)
+
+export type ProjectMember = typeof projectMembers.$inferSelect
+
+// Who may read a secret's value: only the managers, or every project member.
+export const SECRET_ACCESS = ['managers', 'members'] as const
+export type SecretAccess = typeof SECRET_ACCESS[number]
+
+// A project's environment variables: API keys, tokens, connection strings. The
+// value is stored encrypted (see secretCrypto.ts) and never leaves the server in
+// a list; reading one is a separate, audited request.
+export const projectSecrets = pgTable(
+  'project_secrets',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    // The variable name, as written to a .env file.
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    ciphertext: text('ciphertext').notNull(),
+    access: text('access').notNull().default('managers').$type<SecretAccess>(),
+    createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+    updatedBy: text('updated_by').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull()
+  },
+  table => [uniqueIndex('project_secrets_project_name_idx').on(table.projectId, table.name)]
+)
+
+export type ProjectSecret = typeof projectSecrets.$inferSelect
+
+// What happened to a project's secrets and members, and who did it. Values are
+// never written here. The name is kept as text so a deleted secret's history stays.
+export const SECRET_EVENT_ACTIONS = ['create', 'update', 'delete', 'reveal', 'export', 'member_add', 'member_change', 'member_remove'] as const
+export type SecretEventAction = typeof SECRET_EVENT_ACTIONS[number]
+
+export const projectSecretEvents = pgTable(
+  'project_secret_events',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    action: text('action').notNull().$type<SecretEventAction>(),
+    // The secret's name, or the member's name for the member actions.
+    subject: text('subject').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    via: text('via').notNull().$type<'ui' | 'mcp'>(),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('project_secret_events_project_created_idx').on(table.projectId, table.createdAt)]
+)
+
+export type ProjectSecretEvent = typeof projectSecretEvents.$inferSelect
+
+// ─── Agent audit ──────────────────────────────────────────────────────────────
+
+// What an agent did on someone's behalf through their API key: one row per change
+// it made, for the key's owner to read in the Inbox, as if someone else had done
+// it. Names are kept as text beside the ids so a row still reads right after the
+// board, the task or the key is gone. It never emails or pushes.
+export const agentAudit = pgTable(
+  'agent_audit',
+  {
+    id: text('id').primaryKey(),
+    // The owner of the key, who hears about it.
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    apiKeyId: text('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    keyName: text('key_name').notNull(),
+    tool: text('tool').notNull(),
+    toolTitle: text('tool_title').notNull(),
+    projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
+    projectName: text('project_name'),
+    taskId: text('task_id').references(() => projectTasks.id, { onDelete: 'set null' }),
+    taskTitle: text('task_title'),
+    // One line on what changed. Never a secret's value.
+    summary: text('summary').notNull().default(''),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    readAt: bigint('read_at', { mode: 'number' })
+  },
+  table => [
+    index('agent_audit_user_created_idx').on(table.userId, table.createdAt),
+    index('agent_audit_user_read_idx').on(table.userId, table.readAt)
+  ]
+)
+
+export type AgentAuditRow = typeof agentAudit.$inferSelect
