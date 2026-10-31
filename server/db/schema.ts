@@ -605,7 +605,10 @@ export const taskComments = pgTable(
     apiKeyId: text('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     // Set when the author rewrote it, so the thread can say so.
-    editedAt: bigint('edited_at', { mode: 'number' })
+    editedAt: bigint('edited_at', { mode: 'number' }),
+    // The comment this one answers. No foreign key on purpose: when the target is
+    // deleted its id stays, so the reply can say the target was deleted.
+    replyToId: text('reply_to_id')
   },
   table => [index('task_comments_task_id_idx').on(table.taskId)]
 )

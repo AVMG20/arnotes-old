@@ -231,7 +231,8 @@ function reviewText(state: string): string {
     </p>
 
     <p
-      v-if="!links.length && !loading"
+      v-if="!links.length"
+      :class="{ invisible: loading }"
       class="text-xs text-dimmed"
     >
       {{ readonly ? 'Nothing on GitHub is shared with the customer.' : 'No GitHub links yet.' }}

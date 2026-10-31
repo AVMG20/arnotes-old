@@ -23,6 +23,7 @@ import { fireRules, newRuleChain } from './ruleEngine'
 import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
 import { checkFieldValues, describeFieldValues, listFields, loadFieldValues, setFieldValues } from './customFields'
+import { attachReplyPreviews } from './taskComments'
 
 const MAX_LABELS = 10
 const DEFAULT_COLUMN_NAMES = ['Backlog', 'To do', 'Verify', 'Done']
@@ -315,7 +316,9 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
 
   const updates = await db
     .select({
+      id: taskComments.id,
       body: taskComments.body,
+      replyToId: taskComments.replyToId,
       createdAt: taskComments.createdAt,
       createdVia: taskComments.createdVia,
       authorName: user.name,
@@ -344,12 +347,15 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
     // an agent here or by a person in the app, so they pass through untouched.
     // An agent's update is attributed to its key, not to the key's owner, so a
     // thread reads back as the conversation it was.
-    updates: updates.map(update => ({
+    updates: (await attachReplyPreviews(task.id, updates, audience)).map(update => ({
+      id: update.id,
       author: update.createdVia === 'mcp'
         ? `${update.keyName ?? 'MCP key'} (agent)`
         : update.authorName ?? 'Unknown',
       body: update.body,
-      at: new Date(update.createdAt).toISOString()
+      at: new Date(update.createdAt).toISOString(),
+      // The comment this one answers, as the app shows it (see taskComments.ts).
+      replyTo: update.replyTo
     }))
   }
 }

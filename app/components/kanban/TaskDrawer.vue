@@ -2,7 +2,7 @@
 import { columnDotAttrs } from '~/utils/tagColors'
 import { format } from 'date-fns'
 import { relativeTime } from '~/composables/useRelativeTime'
-import type { TaskActivityItem, TaskComment, Visibility, ProjectTask } from '~/composables/useProjects'
+import type { Visibility, ProjectTask } from '~/composables/useProjects'
 import { dueDayToMs, isOverdueDay } from '~/utils/dueDate'
 
 interface Task {
@@ -24,7 +24,6 @@ const props = defineProps<{ task: Task | null }>()
 
 const emit = defineEmits<{ close: [] }>()
 
-const { session } = useAuth()
 const toast = useToast()
 const {
   activeProject,
@@ -37,13 +36,7 @@ const {
   updateTask,
   moveTask,
   deleteTask,
-  comments,
-  activity,
   loadComments,
-  addComment,
-  editComment,
-  setCommentVisibility,
-  deleteComment,
   clearComments
 } = useProjects()
 
@@ -127,20 +120,7 @@ function resetWidth() {
   storedWidth.value = null
 }
 
-// Declared up here because the task-switch watcher below resets them.
-const commentDraft = ref('')
-// Staff updates start internal: a note to the team is the common case, and
-// telling the customer is the step taken on purpose.
-const commentVisibility = ref<Visibility>('internal')
-// The update being rewritten in place, if any.
-const editingId = ref<string | null>(null)
-const editDraft = ref('')
-// The thread opens as its own sheet over the task rather than living under the
-// description: pinned there it took a third of the panel from the description
-// and still had to be scrolled inside itself to be read.
-const updatesOpen = ref(false)
-// Clicking anywhere along the composer row puts the caret in the editor.
-const composer = ref<{ focus: () => void } | null>(null)
+// Label box state, reset with the task.
 const tagDraft = ref('')
 const tagFocused = ref(false)
 const tagHighlight = ref(-1)
@@ -202,7 +182,6 @@ watch(editorContent, () => {
 watch(() => props.task?.id, (id, previousId) => {
   flushTitle(previousId)
   flushDescription(previousId)
-  updatesOpen.value = false
   if (!id) return
 
   titleDraft.value = props.task?.title ?? ''
@@ -212,13 +191,10 @@ watch(() => props.task?.id, (id, previousId) => {
     suppressSave = false
   })
 
-  commentDraft.value = ''
-  commentVisibility.value = 'internal'
-  cancelEdit()
   tagDraft.value = ''
   tagHighlight.value = -1
   clearComments()
-  loadComments(id).then(scrollUpdatesToEnd)
+  loadComments(id)
 }, { immediate: true })
 
 // Changes made elsewhere — an agent over MCP, a teammate, the AI chat — land in
@@ -337,102 +313,14 @@ function onTagBlur() {
   addTag()
 }
 
-// ─── Updates (comments) ────────────────────────────────────
+// ─── Comments ──────────────────────────────────────────────
 
-const updatesEl = ref<HTMLElement | null>(null)
+// The thread and its box live in TaskComments.vue. Escape goes to the thread
+// first, so it can end a reply or an edit before the drawer closes.
+const thread = ref<{ handleEscape: () => boolean } | null>(null)
 
-function initials(name: string | null | undefined) {
-  if (!name) return '?'
-  return name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
-}
-
-const userInitials = computed(() => initials(session.value?.user?.name))
-
-// An update posted by an agent is signed with the key it came in on, not with
-// the account that owns the key — otherwise a night of agent work reads back as
-// the user's own writing.
-function isAgentUpdate(comment: TaskComment) {
-  return comment.createdVia === 'mcp' || comment.createdVia === 'ai'
-}
-
-function updateAuthor(comment: TaskComment) {
-  if (comment.createdVia === 'mcp') return comment.keyName ?? 'MCP key'
-  if (comment.createdVia === 'ai') return 'AI assistant'
-  return comment.userName ?? 'Unknown'
-}
-
-function updateSourceLabel(comment: TaskComment) {
-  return comment.createdVia === 'mcp' ? 'MCP' : 'AI'
-}
-
-// The thread and the log of what happened to the task, in one run, oldest first.
-type StreamEntry
-  = | { key: string, at: number, comment: TaskComment, activity?: undefined }
-    | { key: string, at: number, comment?: undefined, activity: TaskActivityItem }
-
-const stream = computed<StreamEntry[]>(() => [
-  ...comments.value.map(comment => ({ key: `c-${comment.id}`, at: comment.createdAt, comment })),
-  ...activity.value.map(item => ({ key: `a-${item.id}`, at: item.createdAt, activity: item }))
-].sort((a, b) => a.at - b.at))
-
-const ACTIVITY_ICONS: Record<TaskActivityItem['kind'], string> = {
-  created: 'i-lucide-circle-plus',
-  completed: 'i-lucide-circle-check',
-  reopened: 'i-lucide-rotate-ccw',
-  moved: 'i-lucide-arrow-right',
-  assigned: 'i-lucide-user-plus',
-  unassigned: 'i-lucide-user-minus',
-  due: 'i-lucide-calendar',
-  start: 'i-lucide-calendar-clock',
-  renamed: 'i-lucide-pencil',
-  visibility: 'i-lucide-eye'
-}
-
-function activityIcon(kind: TaskActivityItem['kind']) {
-  return ACTIVITY_ICONS[kind]
-}
-
-function activityActor(item: TaskActivityItem) {
-  // A change a rule made names the rule, not the person who saved the rule.
-  if (item.detail.rule) return `Rule: ${item.detail.rule}`
-  return item.actorName ?? 'Someone'
-}
-
-function activityDay(day: string | null | undefined) {
-  return day ? format(dueDayToMs(day), 'MMM d, yyyy') : ''
-}
-
-function activityText(item: TaskActivityItem) {
-  const { from, to } = item.detail
-  const how = item.via === 'mcp' ? ' (via an agent)' : item.via === 'ai' ? ' (via the AI assistant)' : ''
-  switch (item.kind) {
-    case 'created': return `created this task${how}`
-    case 'completed': return `marked this task done${how}`
-    case 'reopened': return `reopened this task${how}`
-    case 'moved': return `moved this task from ${from} to ${to}${how}`
-    case 'assigned': return `assigned this task to ${to}${how}`
-    case 'unassigned': return `removed the assignee${how}`
-    case 'due': return to ? `set the due date to ${activityDay(to)}${how}` : `cleared the due date${how}`
-    case 'start': return to ? `set the start date to ${activityDay(to)}${how}` : `cleared the start date${how}`
-    case 'renamed': return `renamed this task to “${to}”${how}`
-    case 'visibility': return `made this task ${to}${how}`
-  }
-}
-
-async function scrollUpdatesToEnd() {
-  await nextTick()
-  // The sheet mounts its content a tick after it opens.
-  await nextTick()
-  const el = updatesEl.value
-  if (el) el.scrollTop = el.scrollHeight
-}
-
-async function sendComment() {
-  const body = commentDraft.value.trim()
-  if (!body || !props.task) return
-  commentDraft.value = ''
-  await addComment(props.task.id, body, readonly.value ? undefined : commentVisibility.value)
-  scrollUpdatesToEnd()
+function onDrawerEscape(event: KeyboardEvent) {
+  if (thread.value?.handleEscape()) event.preventDefault()
 }
 
 // ─── Done, assignee, due date ──────────────────────────────
@@ -504,105 +392,6 @@ async function toggleTaskVisibility() {
   }
 }
 
-async function toggleCommentVisibility(comment: TaskComment) {
-  try {
-    await setCommentVisibility(comment.taskId, comment.id, comment.visibility === 'internal' ? 'customer' : 'internal')
-  } catch {
-    toast.add({ title: 'Could not change who sees this update', icon: 'i-lucide-alert-triangle', color: 'error' })
-  }
-}
-
-watch(updatesOpen, (isOpen) => {
-  if (!isOpen) return
-  scrollUpdatesToEnd()
-  nextTick(() => composer.value?.focus())
-})
-
-// ─── Editing / removing an update ──────────────────────────
-
-// Your own updates only, and that includes what an agent posted with your key —
-// the server holds the same line.
-function canChange(comment: TaskComment) {
-  return !!session.value?.user && comment.userId === session.value.user.id
-}
-
-// A `ref` inside v-for collects into an array; only one edit box is ever open,
-// so it is kept by hand.
-let editComposer: { focus: () => void } | null = null
-
-function setEditComposer(el: unknown) {
-  editComposer = el as { focus: () => void } | null
-}
-
-async function startEdit(comment: TaskComment) {
-  editingId.value = comment.id
-  editDraft.value = comment.body
-  await nextTick()
-  editComposer?.focus()
-}
-
-function cancelEdit() {
-  editingId.value = null
-  editDraft.value = ''
-}
-
-async function saveEdit() {
-  const id = editingId.value
-  const body = editDraft.value.trim()
-  const taskId = props.task?.id
-  if (!id || !taskId) return
-  // Emptying an update is not how it gets removed; that asks first.
-  if (!body) return
-  cancelEdit()
-  try {
-    await editComment(taskId, id, body)
-  } catch {
-    toast.add({ title: 'Could not save the update', icon: 'i-lucide-alert-triangle', color: 'error' })
-  }
-}
-
-// Escape inside the edit box ends the edit, not the whole sheet.
-function onSheetEscape(event: KeyboardEvent) {
-  if (!editingId.value) return
-  event.preventDefault()
-  cancelEdit()
-}
-
-const deletingComment = ref<TaskComment | null>(null)
-
-async function confirmDeleteComment() {
-  const comment = deletingComment.value
-  deletingComment.value = null
-  if (!comment) return
-  if (editingId.value === comment.id) cancelEdit()
-  try {
-    await deleteComment(comment.taskId, comment.id)
-  } catch {
-    toast.add({ title: 'Could not remove the update', icon: 'i-lucide-alert-triangle', color: 'error' })
-  }
-}
-
-function commentMenu(comment: TaskComment) {
-  const share = readonly.value
-    ? []
-    : [{
-        label: comment.visibility === 'internal' ? 'Show to customer' : 'Make internal',
-        icon: comment.visibility === 'internal' ? 'i-lucide-eye' : 'i-lucide-lock',
-        onSelect: () => toggleCommentVisibility(comment)
-      }]
-  return [[
-    { label: 'Edit', icon: 'i-lucide-pencil', onSelect: () => startEdit(comment) },
-    ...share
-  ], [
-    {
-      label: 'Delete',
-      icon: 'i-lucide-trash-2',
-      color: 'error' as const,
-      onSelect: () => { deletingComment.value = comment }
-    }
-  ]]
-}
-
 // ─── Move / delete ─────────────────────────────────────────
 
 async function moveToColumn(columnId: string) {
@@ -664,6 +453,7 @@ const menuItems = computed(() => [[
     :handle="false"
     handle-only
     :ui="{ content: 'inset-y-0 right-0 rounded-none' }"
+    :content="{ onEscapeKeyDown: onDrawerEscape }"
   >
     <template #content>
       <div
@@ -776,18 +566,6 @@ const menuItems = computed(() => [[
             @click="toggleTaskVisibility"
           />
 
-          <UButton
-            icon="i-lucide-message-square"
-            size="xs"
-            color="neutral"
-            :variant="updatesOpen ? 'soft' : 'ghost'"
-            :label="comments.length ? String(comments.length) : undefined"
-            :aria-label="comments.length ? `Updates (${comments.length})` : 'Updates'"
-            title="Updates"
-            :ui="{ label: 'tabular-nums' }"
-            @click="updatesOpen = true"
-          />
-
           <UDropdownMenu
             :items="menuItems"
             :content="{ align: 'end', collisionPadding: 12 }"
@@ -813,7 +591,10 @@ const menuItems = computed(() => [[
         <!-- Title + labels + description -->
         <!-- Everything below the header scrolls as one on a short screen (a phone), with
              the description kept at a usable height instead of squeezed to its toolbar. -->
-        <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+        <div
+          data-drawer-body
+          class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+        >
           <div class="shrink-0 px-5 pb-3 pt-4">
             <UTextarea
               v-model="titleDraft"
@@ -998,7 +779,7 @@ const menuItems = computed(() => [[
           />
 
           <!-- Description: the rich-text editor, bounded so it keeps its own scroll -->
-          <div class="flex min-h-72 flex-1 flex-col border-t border-default">
+          <div class="flex min-h-72 flex-col border-t border-default">
             <div
               v-if="readonly"
               class="min-h-0 flex-1 overflow-y-auto"
@@ -1013,252 +794,18 @@ const menuItems = computed(() => [[
               class="min-h-0 flex-1"
             />
           </div>
+          <!-- Under the description, in the same scroll body: the conversation and its box. -->
+          <KanbanTaskComments
+            v-if="shownTask"
+            :key="shownTask.id"
+            ref="thread"
+            :task-id="shownTask.id"
+            :readonly="readonly"
+          />
         </div>
       </div>
     </template>
   </UDrawer>
-
-  <!-- Updates: a short running log of what happened, in a sheet of its own
-       that slides in over the task. -->
-  <USlideover
-    v-model:open="updatesOpen"
-    side="right"
-    :content="{ onEscapeKeyDown: onSheetEscape }"
-    :ui="{ content: 'max-w-md' }"
-  >
-    <template #content>
-      <div class="flex h-full flex-col bg-default">
-        <header class="flex shrink-0 items-center gap-2 border-b border-default px-4 py-2.5">
-          <UIcon
-            name="i-lucide-message-square"
-            class="size-4 text-muted"
-          />
-          <span class="text-sm font-semibold text-default">Updates</span>
-          <span
-            v-if="comments.length"
-            class="text-xs tabular-nums text-dimmed"
-          >{{ comments.length }}</span>
-          <span
-            v-if="shownTask"
-            class="min-w-0 flex-1 truncate text-xs text-dimmed"
-            :title="shownTask.title"
-          >· {{ shownTask.title }}</span>
-          <UButton
-            icon="i-lucide-x"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-            aria-label="Close updates"
-            class="ml-auto"
-            @click="updatesOpen = false"
-          />
-        </header>
-
-        <div
-          ref="updatesEl"
-          class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
-        >
-          <p
-            v-if="comments.length === 0"
-            class="py-10 text-center text-xs text-dimmed"
-          >
-            No updates yet. Note where this stands — on staging, waiting on feedback, needs more work.
-          </p>
-
-          <template
-            v-for="entry in stream"
-            :key="entry.key"
-          >
-            <template v-if="entry.comment">
-              <div
-                v-for="comment in [entry.comment]"
-                :key="comment.id"
-                class="group/update flex w-full gap-2.5"
-              >
-                <UAvatar
-                  v-if="isAgentUpdate(comment)"
-                  icon="i-lucide-bot"
-                  size="2xs"
-                  class="mt-0.5 shrink-0"
-                />
-                <UAvatar
-                  v-else
-                  :alt="initials(comment.userName)"
-                  size="2xs"
-                  class="mt-0.5 shrink-0"
-                />
-                <div class="w-full min-w-0 flex-1">
-                  <div class="flex items-baseline gap-2">
-                    <span class="truncate text-xs font-medium text-default">
-                      {{ updateAuthor(comment) }}
-                    </span>
-                    <span
-                      v-if="isAgentUpdate(comment)"
-                      class="shrink-0 rounded px-1 py-px text-[0.625rem] font-semibold uppercase tracking-wide text-muted ring-1 ring-inset ring-accented"
-                    >
-                      {{ updateSourceLabel(comment) }}
-                    </span>
-                    <span
-                      class="shrink-0 text-xs text-dimmed"
-                      :title="fullDate(comment.createdAt)"
-                    >
-                      {{ relativeTime(comment.createdAt) }}
-                    </span>
-                    <span
-                      v-if="comment.editedAt"
-                      class="shrink-0 text-xs text-dimmed"
-                      :title="`Edited ${fullDate(comment.editedAt)}`"
-                    >
-                      (edited)
-                    </span>
-                    <!-- Contacts are never sent internal updates, so only staff see this. -->
-                    <span
-                      v-if="comment.visibility === 'internal'"
-                      class="flex shrink-0 items-center gap-0.5 text-[0.6875rem] text-warning"
-                      title="Internal: the customer does not see this update"
-                    >
-                      <UIcon
-                        name="i-lucide-lock"
-                        class="size-3"
-                      />
-                      Internal
-                    </span>
-
-                    <UDropdownMenu
-                      v-if="canChange(comment) && editingId !== comment.id"
-                      :items="commentMenu(comment)"
-                      :content="{ align: 'end', collisionPadding: 12 }"
-                    >
-                      <UButton
-                        icon="i-lucide-ellipsis"
-                        size="xs"
-                        color="neutral"
-                        variant="ghost"
-                        aria-label="Update options"
-                        class="-my-1 ml-auto opacity-0 transition-opacity focus-visible:opacity-100 group-hover/update:opacity-100 data-[state=open]:opacity-100"
-                      />
-                    </UDropdownMenu>
-                  </div>
-
-                  <div
-                    v-if="editingId === comment.id"
-                    class="mt-1 rounded-md border border-default bg-elevated/40 px-2.5 py-2"
-                  >
-                    <UpdateComposer
-                      :ref="setEditComposer"
-                      v-model="editDraft"
-                      placeholder="Edit the update…"
-                      @submit="saveEdit"
-                    />
-                    <div class="mt-2 flex items-center justify-end gap-1">
-                      <span class="mr-auto text-[0.6875rem] text-dimmed">Enter to save · Esc to cancel</span>
-                      <UButton
-                        label="Cancel"
-                        size="xs"
-                        color="neutral"
-                        variant="ghost"
-                        @click="cancelEdit"
-                      />
-                      <UButton
-                        label="Save"
-                        size="xs"
-                        :disabled="!editDraft.trim()"
-                        @click="saveEdit"
-                      />
-                    </div>
-                  </div>
-                  <InlineMarkdown
-                    v-else
-                    :text="comment.body"
-                    class="text-sm leading-relaxed text-default"
-                  />
-                </div>
-              </div>
-            </template>
-            <div
-              v-else
-              class="flex items-center gap-2.5 text-xs text-muted"
-              :data-activity="entry.activity.kind"
-            >
-              <span class="flex size-5 shrink-0 items-center justify-center rounded-full bg-elevated">
-                <UIcon
-                  :name="activityIcon(entry.activity.kind)"
-                  class="size-3"
-                />
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="font-medium text-default">{{ activityActor(entry.activity) }}</span>
-                {{ activityText(entry.activity) }}
-              </span>
-              <span
-                class="shrink-0 text-dimmed"
-                :title="fullDate(entry.at)"
-              >{{ relativeTime(entry.at) }}</span>
-            </div>
-          </template>
-        </div>
-
-        <div
-          class="flex shrink-0 cursor-text items-start gap-2 border-t border-default px-4 py-3"
-          @click="composer?.focus()"
-        >
-          <UAvatar
-            :alt="userInitials"
-            size="2xs"
-            class="mt-0.5 shrink-0"
-          />
-          <UpdateComposer
-            ref="composer"
-            v-model="commentDraft"
-            :placeholder="readonly || commentVisibility === 'customer' ? 'Write to the team and the customer…' : 'Add an internal update…'"
-            @submit="sendComment"
-          />
-          <UButton
-            v-if="!readonly"
-            :icon="commentVisibility === 'internal' ? 'i-lucide-lock' : 'i-lucide-eye'"
-            size="xs"
-            :color="commentVisibility === 'internal' ? 'warning' : 'neutral'"
-            variant="ghost"
-            class="shrink-0"
-            :aria-label="commentVisibility === 'internal' ? 'Internal update: click to show it to the customer' : 'Customer can see: click to make it internal'"
-            :title="commentVisibility === 'internal' ? 'Internal update: click to show it to the customer' : 'Customer can see: click to make it internal'"
-            @click.stop="commentVisibility = commentVisibility === 'internal' ? 'customer' : 'internal'"
-          />
-          <UButton
-            icon="i-lucide-arrow-up"
-            size="xs"
-            color="primary"
-            class="shrink-0"
-            :disabled="!commentDraft.trim()"
-            aria-label="Add update"
-            @click="sendComment"
-          />
-        </div>
-      </div>
-    </template>
-  </USlideover>
-
-  <UModal
-    :open="deletingComment !== null"
-    title="Delete this update?"
-    description="It is removed from the task for good. This cannot be undone."
-    :ui="{ footer: 'justify-end' }"
-    @update:open="(v: boolean) => { if (!v) deletingComment = null }"
-  >
-    <template #footer>
-      <UButton
-        label="Cancel"
-        color="neutral"
-        variant="ghost"
-        @click="deletingComment = null"
-      />
-      <UButton
-        label="Delete update"
-        color="error"
-        @click="confirmDeleteComment"
-      />
-    </template>
-  </UModal>
 
   <UModal
     v-model:open="deleteOpen"

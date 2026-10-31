@@ -4,9 +4,10 @@
 import { db } from '../db'
 import { taskComments, VISIBILITIES } from '../db/schema'
 import type { Visibility } from '../db/schema'
+import { resolveReplyTarget } from './taskComments'
 import { audienceOf } from './mcpAccess'
 import { findTask } from './mcpBoardTools'
-import { McpToolError, newId, optionalString, requireString } from './mcpToolKit'
+import { McpToolError, asToolErrorAsync, newId, optionalString, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 import { notificationExcerpt } from './notifications'
 import { notifyComment } from './notifyEvents'
@@ -16,7 +17,7 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
   {
     name: 'post_task_update',
     title: 'Write an update on a task',
-    description: 'Add an update to a task\'s thread: report progress, ask a question, answer one. The people on the task are told in their Inbox. Staff updates are internal unless you say "customer"; a customer contact\'s are always visible to the customer. Read the thread first with get_task.',
+    description: 'Add an update to a task\'s thread: report progress, ask a question, answer one. The people on the task are told in their Inbox. Staff updates are internal unless you say "customer"; a customer contact\'s are always visible to the customer. Read the thread first with get_task. To answer a comment, pass its id as replyTo; it must be a comment on this task that you can see.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -24,7 +25,8 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
       properties: {
         id: { type: 'string', description: 'The task id.' },
         body: { type: 'string', description: 'The update, as inline Markdown.' },
-        visibility: { type: 'string', description: '"internal" (default for staff) or "customer".' }
+        visibility: { type: 'string', description: '"internal" (default for staff) or "customer".' },
+        replyTo: { type: 'string', description: 'The id of the comment this one answers (optional). It must be a comment on this task that you can see.' }
       },
       required: ['id', 'body']
     },
@@ -38,12 +40,17 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
       }
       const visibility: Visibility = audienceOf(context, board) === 'customer' ? 'customer' : ((asked as Visibility | undefined) ?? 'internal')
 
+      // The reply target is checked as the app checks it (see taskComments.ts): same
+      // task, and a customer never learns of an internal comment, not even by error.
+      const replyTo = await asToolErrorAsync(() => resolveReplyTarget(task.id, optionalString(args, 'replyTo'), audienceOf(context, board)))
+
       const [comment] = await db.insert(taskComments).values({
         id: newId(),
         taskId: task.id,
         userId: context.userId,
         body,
         visibility,
+        replyToId: replyTo ?? null,
         createdVia: 'mcp',
         apiKeyId: context.keyId,
         createdAt: Date.now()
@@ -56,7 +63,7 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
         posted: true,
         // At the top level so the open browsers are told which board changed.
         board: { id: board.id, name: board.name },
-        update: { id: comment!.id, visibility, excerpt: notificationExcerpt(body) }
+        update: { id: comment!.id, visibility, excerpt: notificationExcerpt(body), replyTo: replyTo ?? null }
       }
     }
   }

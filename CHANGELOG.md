@@ -4,6 +4,9 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- Comments sit under the description in the task drawer, with a box to write in; the Updates panel is gone and its log of changes is part of the thread. Every comment has Copy link (opens the task, scrolls to the comment and highlights it) and Reply (the reply says "In reply to", and clicking that jumps to the earlier comment). Agents can reply too: `post_task_update` takes `replyTo`, and `get_task` shows each comment's id and what it answers. A customer never sees an internal comment or its preview. The database gains `reply_to_id` on task comments.
+- The "No GitHub links yet" line no longer comes and goes while you type, so the description stops jumping
+
 - An Agent audit tab in the Inbox. When an agent changes something through one of your API keys (moves a task, posts an update, edits a secret), it arrives in the Inbox as if a teammate you follow had done it, with the key's name, the project and the task. The tab appears only for people who have agent activity, secret values are never shown (names and counts only), and rows are removed after 90 days. Nothing is emailed or pushed. The database gains `agent_audit`.
 - Known limit of the `.env` export: a value that contains a single quote together with a double quote, dollar sign or backslash is written for bash and Docker Compose; Node `dotenv` does not undo those escapes
 

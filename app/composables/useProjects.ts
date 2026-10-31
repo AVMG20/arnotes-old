@@ -101,6 +101,16 @@ export interface TaskComment {
   // of the key it used, which is what the thread signs it with.
   createdVia?: DeletionSource | null
   keyName?: string | null
+  // The comment this one answers, previewed for this viewer; null when it answers none or the parent is hidden from them.
+  replyTo?: CommentReplyPreview | null
+}
+
+// What a reply points back at, as the server previews it for the viewer.
+export interface CommentReplyPreview {
+  id: string
+  authorName: string | null
+  excerpt: string
+  deleted: boolean
 }
 
 // One line of a task's log: made, finished, moved, rescheduled, given to someone.
@@ -947,10 +957,11 @@ export function useProjects() {
 
   // Staff updates start internal unless asked otherwise; the server ignores the
   // choice for a customer contact, whose updates are always customer-visible.
-  async function addComment(taskId: string, body: string, visibility?: Visibility) {
+  // replyTo is the id of the comment this one answers; the server checks the author may see it.
+  async function addComment(taskId: string, body: string, visibility?: Visibility, replyTo?: string) {
     const comment = await $fetch<TaskComment>(`/api/tasks/${taskId}/comments`, {
       method: 'POST', headers: realtimeHeaders(),
-      body: { body, visibility }
+      body: { body, visibility, ...(replyTo ? { replyTo } : {}) }
     })
     _comments.value = [..._comments.value, comment]
     _commentCounts.value = { ..._commentCounts.value, [taskId]: (_commentCounts.value[taskId] ?? 0) + 1 }
