@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- Subtasks through the agent tools: `create_task` takes `parent` (a card's id or link) and makes the new task a subtask in that card's panel, on its board and column, with its visibility and at the bottom of its list. `get_task` names the parent of a subtask and lists the subtasks of a card (id, title, assignee, done). `my_tasks` includes subtasks assigned to the key's owner, each with its parent, so `move_task`, `post_task_update` and `log_time` can be used on it by its own id.
+
 - On a phone, a long project name in the header wraps to two lines instead of being cut to "S…" (the full name is in the tooltip), and the task count steps aside to make room
 
 - On a phone, the description toolbar fades where commands are cut off, and focusing the description no longer scrolls its sticky toolbar out of view. The secrets list says that the downloaded `.env` is written for shells and Docker Compose, and the `get_project_env` tool description says the same

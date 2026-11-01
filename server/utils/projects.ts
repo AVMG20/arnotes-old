@@ -115,6 +115,11 @@ export async function columnTasksOrdered(columnId: string) {
     .orderBy(asc(projectTasks.position))
 }
 
+/** The position for a new subtask: the bottom of its parent's list. */
+export async function nextSubtaskPosition(parentTaskId: string) {
+  return ((await subtasksOrdered(parentTaskId)).at(-1)?.position ?? -1000) + 1000
+}
+
 /** A task's live subtasks, in their own order. */
 export async function subtasksOrdered(parentTaskId: string) {
   return db

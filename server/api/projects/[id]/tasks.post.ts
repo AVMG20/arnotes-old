@@ -2,7 +2,7 @@ import { db } from '../../../db'
 import { projects, projectTasks, VISIBILITIES } from '../../../db/schema'
 import type { Visibility } from '../../../db/schema'
 import { eq } from 'drizzle-orm'
-import { requireColumn, requireStaff, requireTask, columnTasksOrdered, subtasksOrdered, genId } from '../../../utils/projects'
+import { requireColumn, requireStaff, requireTask, columnTasksOrdered, nextSubtaskPosition, genId } from '../../../utils/projects'
 import { publishFromEvent } from '../../../utils/realtime'
 import { requireAssignable } from '../../../utils/people'
 import { parseDueOn } from '../../../utils/taskFields'
@@ -36,10 +36,9 @@ export default defineEventHandler(async (event) => {
     if (project.id !== getRouterParam(event, 'id')) {
       throw createError({ statusCode: 400, message: 'That task belongs to another project' })
     }
-    const siblings = await subtasksOrdered(parent.id)
     projectRow = project
     columnId = parent.columnId
-    position = (siblings.at(-1)?.position ?? -1000) + 1000
+    position = await nextSubtaskPosition(parent.id)
     parentTaskId = parent.id
     // A subtask of an internal task would otherwise show a customer the inside
     // of work they cannot see.

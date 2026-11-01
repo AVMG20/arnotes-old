@@ -14,7 +14,7 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
   {
     name: 'my_tasks',
     title: 'Read my tasks',
-    description: 'The tasks assigned to the key\'s owner across every board they can open, soonest due date first: the same list as "My tasks" in the app. Finished tasks are left out unless asked for.',
+    description: 'The tasks assigned to the key\'s owner across every board they can open, soonest due date first: the same list as "My tasks" in the app, plus the subtasks assigned to them, each with its parent (parent: id and title) so it can be worked by its own id. Finished tasks are left out unless asked for.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
@@ -39,19 +39,28 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
           dueOn: projectTasks.dueOn,
           startOn: projectTasks.startOn,
           completedAt: projectTasks.completedAt,
-          labels: projectTasks.tags
+          labels: projectTasks.tags,
+          parentTaskId: projectTasks.parentTaskId
         })
         .from(projectTasks)
         .innerJoin(projects, eq(projects.id, projectTasks.projectId))
         .where(and(
           eq(projectTasks.assigneeId, context.userId),
           isNull(projectTasks.deletedAt),
-          // Subtasks live in their parent, as they do in the app's list.
-          isNull(projectTasks.parentTaskId),
           readableTasksIn(context, boards),
           includeCompleted ? undefined : isNull(projectTasks.completedAt)
         ))
         .orderBy(asc(projectTasks.dueOn), asc(projectTasks.title))
+
+      // A subtask names its parent, so it can be found and worked by its own id.
+      const parentIds = [...new Set(rows.flatMap(row => (row.parentTaskId ? [row.parentTaskId] : [])))]
+      const parents = parentIds.length
+        ? await db
+            .select({ id: projectTasks.id, title: projectTasks.title })
+            .from(projectTasks)
+            .where(and(inArray(projectTasks.id, parentIds), isNull(projectTasks.deletedAt), readableTasksIn(context, boards)))
+        : []
+      const parentTitles = new Map(parents.map(parent => [parent.id, parent.title]))
 
       // Tasks with no date sort last, as in the app.
       const sorted = [...rows].sort((a, b) => (a.dueOn ?? '9999').localeCompare(b.dueOn ?? '9999'))
@@ -64,7 +73,8 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
           ...(row.dueOn ? { dueOn: row.dueOn } : {}),
           ...(row.startOn ? { startOn: row.startOn } : {}),
           ...(row.completedAt ? { completed: true } : {}),
-          ...(row.labels.length ? { labels: row.labels } : {})
+          ...(row.labels.length ? { labels: row.labels } : {}),
+          ...(row.parentTaskId ? { parent: { id: row.parentTaskId, title: parentTitles.get(row.parentTaskId) ?? null } } : {})
         }))
       }
     }
