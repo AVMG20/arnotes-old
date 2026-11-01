@@ -26,6 +26,7 @@ Taskmanager is a self-hosted project manager for an agency and its customers: or
 - Automation rules per project: a trigger, conditions and actions, with a run log, and loop protection
 - Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload — on shared links too
 - Built-in MCP server so Claude Code and other AI agents can read and manage your boards, using API keys you scope yourself
+- Crews: agent teams made through the crew API, with an instance-admin Crews page; see [Crew API](#crew-api)
 - Installable Progressive Web App
 - Docker- and Nix-based self-hosting with persistent PostgreSQL and attachment storage
 
@@ -443,7 +444,7 @@ The setup guide also offers a copyable skill file that teaches an agent the conv
 
 `/api/crews` creates and manages crews for the crew kit. It answers only a request that really comes from this machine: the socket peer is loopback and the request carries no `X-Forwarded-For`, `X-Real-IP` or `Forwarded` header, whatever its value or casing. Behind a reverse proxy every request counts as remote, and while the window is closed a remote request gets a plain `404` with no hint.
 
-To call it from elsewhere, an instance admin opens the window in Settings for 10 minutes (`POST /api/settings/crew-api-window`). Opening mints a temporary `crews:manage` key, shown once. While the window is open, remote callers may use only that key. The window closes at its end time, when the admin closes it, or at the first failed key on `/api/crews`: a bad, expired, wrong-scope or non-admin key closes it, whether the caller is local or remote. A failed key also revokes the temporary key and records the reason and the caller's address. The window row is cached for at most two seconds. The process that closes the window clears its cache at once; another process reads the close within those two seconds.
+To call it from elsewhere, an instance admin opens the window on the Crews page (linked from Settings) for 10 minutes (`POST /api/settings/crew-api-window`). Opening mints a temporary `crews:manage` key, shown once. While the window is open, remote callers may use only that key. The window closes at its end time, when the admin closes it, or at the first failed key on `/api/crews`: a bad, expired, wrong-scope or non-admin key closes it, whether the caller is local or remote. A failed key also revokes the temporary key and records the reason and the caller's address. The window row is cached for at most two seconds. The process that closes the window clears its cache at once; another process reads the close within those two seconds.
 
 Operator notes:
 
