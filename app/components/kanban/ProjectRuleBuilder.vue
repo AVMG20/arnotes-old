@@ -155,6 +155,12 @@ const names = computed<RuleNames>(() => ({
 const checked = computed(() => validateRule(body.value, context.value))
 const preview = computed(() => checked.value.ok ? describeRule(checked.value.rule, names.value) : null)
 const problems = computed(() => checked.value.ok ? [] : checked.value.problems)
+// The first problem is the reason the save button is off. Only one line shows, so the page does not move as the rule changes.
+const firstProblem = computed(() => {
+  const list = problems.value
+  if (!list.length) return ''
+  return list.length > 1 ? `${list[0]} (and ${list.length - 1} more)` : list[0]
+})
 
 const saving = ref(false)
 const saveError = ref('')
@@ -297,24 +303,18 @@ async function save() {
     </section>
 
     <div
-      class="rounded-lg bg-elevated px-3 py-2 text-sm"
+      class="flex min-h-14 items-center rounded-lg bg-elevated px-3 py-2 text-sm"
       data-rule-preview
     >
-      <template v-if="preview">
-        <span class="text-default">{{ preview }}</span>
-      </template>
-      <ul
+      <span
+        v-if="preview"
+        class="text-default"
+      >{{ preview }}</span>
+      <span
         v-else
-        class="space-y-1 text-xs text-error"
+        class="text-error"
         data-rule-problems
-      >
-        <li
-          v-for="problem in problems"
-          :key="problem"
-        >
-          {{ problem }}
-        </li>
-      </ul>
+      >{{ firstProblem }}</span>
     </div>
 
     <p

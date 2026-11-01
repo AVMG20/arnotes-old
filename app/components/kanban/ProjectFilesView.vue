@@ -3,6 +3,8 @@ const emit = defineEmits<{ openTask: [taskId: string] }>()
 
 const { board, subtasks, isTrashed } = useProjects()
 
+const route = useRoute()
+
 const IMG_SRC = /<img[^>]+src="(\/api\/attachments\/tasks\/[^"]+)"/g
 
 const files = computed(() =>
@@ -32,7 +34,11 @@ const preview = ref<string | null>(null)
         class="size-6 text-dimmed"
       />
       <p class="text-sm text-muted">
-        Images added to task descriptions show up here.
+        Paste or drop an image into any
+        <NuxtLink
+          :to="{ path: route.path, query: { ...route.query, view: undefined } }"
+          class="text-primary hover:underline"
+        >task description</NuxtLink> and it shows up here. Only images are listed.
       </p>
     </div>
 

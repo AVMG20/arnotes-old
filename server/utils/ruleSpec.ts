@@ -113,7 +113,7 @@ function readText(value: unknown, max: number): string | null {
 // name the step and say what to pick.
 function pickColumn(value: unknown, context: RuleContext, problems: string[], where: string): string | null {
   if (typeof value === 'string' && context.columnIds.includes(value)) return value
-  problems.push(`Pick a column that is on this board for ${where}`)
+  problems.push(`Choose the column for '${where}'`)
   return null
 }
 
@@ -143,7 +143,7 @@ function parseTrigger(raw: unknown, context: RuleContext, problems: string[]): T
   }
   const kind = raw.kind
   if (kind === 'task_moved') {
-    const columnId = pickColumn(raw.columnId, context, problems, 'the moved-to-column trigger')
+    const columnId = pickColumn(raw.columnId, context, problems, 'A task is moved to a column')
     return columnId === null ? null : { kind, columnId }
   }
   if (kind === 'task_assigned') {
@@ -161,7 +161,7 @@ function parseCondition(raw: unknown, context: RuleContext, problems: string[]):
   }
   switch (raw.kind) {
     case 'in_column': {
-      const columnId = pickColumn(raw.columnId, context, problems, 'the in-column condition')
+      const columnId = pickColumn(raw.columnId, context, problems, 'The task is in a column')
       return columnId === null ? null : { kind: 'in_column', columnId }
     }
     case 'assigned_to': {
@@ -196,7 +196,7 @@ function parseAction(raw: unknown, context: RuleContext, problems: string[]): Ac
   }
   switch (raw.kind) {
     case 'move_to_column': {
-      const columnId = pickColumn(raw.columnId, context, problems, 'the move action')
+      const columnId = pickColumn(raw.columnId, context, problems, 'Move it to a column')
       return columnId === null ? null : { kind: 'move_to_column', columnId }
     }
     case 'assign': {

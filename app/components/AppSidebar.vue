@@ -69,7 +69,7 @@ watch(() => route.path, () => emit('close'))
           name="i-lucide-search"
           class="size-4 shrink-0"
         />
-        <span class="min-w-0 flex-1 truncate text-left">Search everything...</span>
+        <span class="min-w-0 flex-1 truncate text-left">Search tasks and boards…</span>
         <UKbd
           value="meta"
           size="sm"

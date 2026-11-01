@@ -17,6 +17,12 @@ const switchErrors = ref<Record<string, string>>({})
 // The rule being edited, 'new' for a rule being created, or null.
 const editing = ref<string | null>(null)
 const logOpen = ref<string | null>(null)
+// Why New rule is off, if it is. The line is always there, so the page does not move.
+const newRuleHint = computed(() => {
+  if (rules.value.length >= MAX_RULES_PER_PROJECT) return `This project has ${MAX_RULES_PER_PROJECT} rules, the most it can hold. Delete one to add another.`
+  if (editing.value !== null) return 'Save or cancel the open rule first.'
+  return ''
+})
 
 // Visibility can only be set by the project owner: the owner id is on the project record.
 // The server checks it again on save.
@@ -88,8 +94,9 @@ async function onSaved() {
       <span
         class="shrink-0 text-xs tabular-nums text-dimmed"
         data-rule-count
+        :title="'Each project can have up to ' + MAX_RULES_PER_PROJECT + ' rules.'"
       >
-        {{ rules.length }} of {{ MAX_RULES_PER_PROJECT }}
+        {{ rules.length }} of {{ MAX_RULES_PER_PROJECT }} rules used
       </span>
       <UButton
         label="New rule"
@@ -100,6 +107,13 @@ async function onSaved() {
         @click="editing = 'new'"
       />
     </div>
+
+    <p
+      class="min-h-5 text-xs text-muted"
+      data-rule-new-hint
+    >
+      {{ newRuleHint }}
+    </p>
 
     <KanbanProjectRuleBuilder
       v-if="editing === 'new'"
