@@ -1,0 +1,16 @@
+{
+  "name": "taskmanager-crew",
+  "version": "1.0.0",
+  "description": "The Taskmanager crew kit: a team of agents that build a product on a Taskmanager board.",
+  "type": "module",
+  "private": true,
+  "bin": { "crew": "crew.mjs" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "init": "node init.mjs",
+    "setup": "node setup.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  }
+}

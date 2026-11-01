@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- Only used on a machine with no system fonts (a minimal container, NixOS without a font
+     package): headless Chromium then has nothing to draw its own UI text with and exits on
+     some pages. init.mjs writes this file when "fontDir" is set in crew.config.json. -->
+<fontconfig>
+  <dir>{{fontDir}}</dir>
+  <cachedir>{{crew_dir}}/.fontcache</cachedir>
+  <alias><family>sans-serif</family><prefer><family>DejaVu Sans</family></prefer></alias>
+  <alias><family>serif</family><prefer><family>DejaVu Serif</family></prefer></alias>
+  <alias><family>monospace</family><prefer><family>DejaVu Sans Mono</family></prefer></alias>
+</fontconfig>

@@ -1,0 +1,29 @@
+# The files of the crew kit. This list is the only thing that decides what ships:
+# server/utils/crewKit.ts packs these into /crew/kit.tar.gz, the Dockerfile copies them into the
+# image, and nix/arnotes.nix copies them into the package. Anything else in crew/ (credentials,
+# profiles, logs, rendered documents, work folders) stays in the working copy.
+# One file name per line; lines starting with # are comments. Keep it sorted.
+
+BRIEF.md.tmpl
+CHANGELOG.md
+CREW.md.tmpl
+NITPICKER.md.tmpl
+PIA-UX.md.tmpl
+PIETJE.md.tmpl
+PROJECT-RULES.md.tmpl
+PROMPTS.md.tmpl
+README.md
+SKILL.md
+config.mjs
+crew.config.example.json
+crew.mjs
+fonts.conf.tmpl
+guard.sh
+init.mjs
+listen.mjs
+package.json
+postbrief.mjs
+setup.mjs
+tm.mjs
+watch.mjs
+watchlogs.mjs

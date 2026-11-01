@@ -1,0 +1,42 @@
+# Rules of the code: {{product.name}}
+
+This is the one file you edit to make the crew fit your product. `init.mjs` writes it once and
+never overwrites it. Everything the crew does in the repository (`{{product.repo}}`) follows it.
+Replace the examples below with your own facts; delete lines that do not apply.
+
+## Run it
+
+- Start the dev copy: `<command>` (it must answer at {{product.appUrl}})
+- Dev log: `<command> > {{crew_dir}}/dev.log 2>&1` (the log watcher reads it, optional)
+- Lint (run on your own files before you report): `<for example: npx eslint <files>>`
+- Typecheck / tests (Boss runs them before publishing): `<for example: npm run typecheck && npm test>`
+
+## Editing files
+
+- Edit with: `<your editor of choice, or: the Edit tool>`. <If your machine has a protected-edit tool, name it here.>
+- Match the neighbouring code: naming, comment density, structure.
+
+## Database (delete this section if there is none)
+
+- Changes must be **additive only**: new tables, new nullable or defaulted columns. Never rename,
+  drop or retype anything.
+- The schema lives in `<path>`. After you change it, post a task update that starts with
+  `SCHEMA CHANGED:` naming the table and columns. Boss applies it with a backup.
+- Nobody but Boss runs migrations or `psql`.
+
+## Secrets
+
+- `<where credentials and keys live, for example: only in the server environment, never in the client bundle or a log>`
+
+## Conventions the code relies on
+
+- `<example: a new top-level API route must be added to the auth middleware's protected list>`
+- `<example: server utilities are auto-imported>`
+
+## Release (Boss only)
+
+1. Back up the database: `<command>`
+2. Apply the schema change: `<command>`
+3. Typecheck and lint: `<command>`
+4. Commit with `<attribution lines, if any>` and push: `<command>`
+5. Move the published tasks to Done.

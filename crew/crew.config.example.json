@@ -1,0 +1,41 @@
+{
+  "team": "Acme Crew",
+  "product": {
+    "name": "Acme App",
+    "repo": "/absolute/path/to/the/product/repository",
+    "appUrl": "http://localhost:3000"
+  },
+  "board": {
+    "url": "http://localhost:3000",
+    "name": "Acme App Development Center"
+  },
+  "customer": {
+    "name": "Acme",
+    "personName": "Casey Customer",
+    "nick": "customer"
+  },
+  "people": {
+    "boss": "Boss",
+    "pm": "Pia Planner",
+    "w1": "Wren Worker",
+    "w2": "Wick Worker",
+    "w3": "Wynn Worker",
+    "w4": "Wade Worker",
+    "pietje": "Pietje Precies",
+    "nitpicker": "Nina Nitpick",
+    "contact": "Casey Contact"
+  },
+  "nicks": { "pm": "pia", "w1": "wren", "w2": "wick", "w3": "wynn", "w4": "wade", "pietje": "pietje", "nitpicker": "nitpicker" },
+  "chat": {
+    "client": "/absolute/path/to/chat-client-rs (leave empty to run without the chat line)",
+    "channel": "#acme",
+    "workChannel": "#acmework"
+  },
+  "chromium": "",
+  "fontDir": "",
+  "db": {
+    "psql": "",
+    "url": ""
+  },
+  "subagentsDir": ""
+}
