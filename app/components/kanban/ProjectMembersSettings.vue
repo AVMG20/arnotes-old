@@ -72,7 +72,7 @@ function sourceOf(person: ProjectPerson): string {
   if (person.role === 'manager' && !person.explicit) return `Team ${person.teamRole}`
   if (person.explicit) return 'Added to the project'
   if (person.role === 'member') return 'Member of the team'
-  return 'Not on the project'
+  return 'Can see the board, not the secrets'
 }
 
 function messageOf(e: unknown, fallback: string) {
@@ -273,7 +273,7 @@ async function remove(person: ProjectPerson) {
               <p class="truncate font-medium text-default">
                 {{ person.name || person.email }}
               </p>
-              <p class="truncate text-xs text-dimmed">
+              <p class="text-xs text-dimmed">
                 {{ sourceOf(person) }}
               </p>
             </div>
@@ -281,7 +281,8 @@ async function remove(person: ProjectPerson) {
 
           <div class="ml-auto flex flex-wrap items-center gap-2">
             <span
-              class="rounded-full px-2 py-0.5 text-xs"
+              v-if="person.role !== null || person.isProjectOwner"
+              class="shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-xs"
               :class="badgeOf(person).classes"
               data-member-badge
             >
