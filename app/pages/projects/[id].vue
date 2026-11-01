@@ -47,6 +47,7 @@ const VIEWS = [
 const STAFF_ONLY_VIEWS: string[] = ['messages', 'time', 'settings']
 const visibleViews = computed(() => VIEWS.filter(v => !STAFF_ONLY_VIEWS.includes(v.key) || !isCustomerView.value))
 
+const tabViews = computed(() => visibleViews.value.filter(v => v.key !== 'settings'))
 const view = computed(() => visibleViews.value.find(v => v.key === route.query.view)?.key ?? 'board')
 
 function setView(key: string) {
@@ -79,18 +80,35 @@ onMounted(() => {
 onBeforeUnmount(() => window.removeEventListener('resize', updateTabCues))
 
 const loadFailed = ref(false)
+// The team a board that will not open here belongs to, when the caller is in that team.
+const teamHint = ref<{ teamId: string, teamName: string } | null>(null)
 
-watch(projectId, async (id) => {
-  if (!id || !/^[a-z0-9]+$/i.test(id)) return
+async function openBoard(id: string) {
   loadFailed.value = false
+  teamHint.value = null
   try {
     await loadBoard(id)
   } catch {
     // Deleted in another tab, or a board from a workspace this session no longer
     // has: an endless spinner is the one thing that must not happen.
     loadFailed.value = true
+    teamHint.value = await $fetch<{ teamId: string, teamName: string }>(`/api/projects/${id}/team-hint`).catch(() => null)
   }
+}
+
+watch(projectId, (id) => {
+  if (!id || !/^[a-z0-9]+$/i.test(id)) return
+  openBoard(id)
 }, { immediate: true })
+
+// The board's team is one click away: switch the workspace to it and open the board.
+async function switchToHintTeam() {
+  const hint = teamHint.value
+  if (!hint) return
+  await setActiveTeam(hint.teamId)
+  await refreshProjects()
+  await openBoard(projectId.value)
+}
 
 // ─── Task panel ────────────────────────────────────────────
 
@@ -181,7 +199,8 @@ const taskCountTitle = computed(() => {
 
 // Only an organisation's boards can belong to a customer; a personal board has
 // nobody to share with.
-const { activeTeamId } = useTeams()
+const { activeTeamId, setActiveTeam } = useTeams()
+const { refresh: refreshProjects } = useProjects()
 const { customers, ensureLoaded: ensureCustomers } = useCustomers()
 const toast = useToast()
 
@@ -347,6 +366,20 @@ useSeoMeta({
           </template>
         </UPopover>
 
+        <!-- Settings lives here, not in the tab row: at 1280 px the last tab was cut off -->
+        <UButton
+          v-if="activeProject && !isCustomerView"
+          icon="i-lucide-settings"
+          size="xs"
+          :color="view === 'settings' ? 'primary' : 'neutral'"
+          :variant="view === 'settings' ? 'soft' : 'ghost'"
+          aria-label="Project settings"
+          data-project-settings
+          @click="setView('settings')"
+        >
+          <span class="hidden sm:inline">Settings</span>
+        </UButton>
+
         <SharePopover
           v-if="activeProject && !isCustomerView"
           subject="board"
@@ -408,7 +441,7 @@ useSeoMeta({
       @scroll="updateTabCues"
     >
       <button
-        v-for="v in visibleViews"
+        v-for="v in tabViews"
         :key="v.key"
         class="relative flex shrink-0 items-center gap-1.5 px-2.5 py-2 text-sm transition-colors"
         :class="view === v.key ? 'font-medium text-default' : 'text-muted hover:text-default'"
@@ -486,8 +519,16 @@ useSeoMeta({
           class="size-6 text-dimmed"
         />
         <p class="text-sm text-muted">
-          This board is not available in this workspace.
+          {{ teamHint ? `This board is in the team ${teamHint.teamName}.` : "This board is not available in this workspace." }}
         </p>
+        <UButton
+          v-if="teamHint"
+          :label="`Switch to ${teamHint.teamName} and open it`"
+          size="sm"
+          color="primary"
+          variant="soft"
+          @click="switchToHintTeam"
+        />
         <UButton
           label="Back to projects"
           size="sm"
