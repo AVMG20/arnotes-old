@@ -44,6 +44,15 @@ let savedTimer: ReturnType<typeof setTimeout> | undefined
 const base = computed(() => `/api/projects/${props.projectId}/members`)
 // A personal project has no team, so it has nobody to add.
 const personal = ref(false)
+// The teams this person is in, and the one a new team project goes into (the first unless one is picked).
+const { teams, setActiveTeam } = useTeams()
+const { refresh: refreshProjects } = useProjects()
+const pickedTeam = ref('')
+const teamForNew = computed(() => pickedTeam.value || teams.value[0]?.id || '')
+const startingTeamProject = ref(false)
+function pickTeam(event: Event) {
+  pickedTeam.value = (event.target as HTMLSelectElement).value
+}
 // Team members who are not on the project yet, in the order the server lists them.
 const candidates = computed(() => people.value.filter(person => person.role === null))
 
@@ -55,7 +64,7 @@ function badgeOf(person: ProjectPerson): { label: string, classes: string } {
   if (person.role === 'manager' && !person.explicit) return { label: 'Team admin', classes: 'bg-elevated text-default' }
   if (person.role === 'manager') return { label: 'Manager', classes: 'bg-primary/10 text-primary' }
   if (person.role === 'member') return { label: 'Member', classes: 'bg-elevated text-default' }
-  return { label: 'No access', classes: 'bg-elevated text-dimmed' }
+  return { label: 'Can see board', classes: 'bg-elevated text-default' }
 }
 
 function sourceOf(person: ProjectPerson): string {
@@ -89,6 +98,19 @@ async function load() {
     error.value = messageOf(e, 'Could not load the members')
   } finally {
     loading.value = false
+  }
+}
+
+// Starts a team project in the team picked here: switch to that team, then open the new-project form.
+async function startTeamProject() {
+  if (!teamForNew.value) return
+  startingTeamProject.value = true
+  try {
+    await setActiveTeam(teamForNew.value)
+    await refreshProjects()
+    await navigateTo('/projects?new=1')
+  } finally {
+    startingTeamProject.value = false
   }
 }
 
@@ -170,8 +192,7 @@ async function remove(person: ProjectPerson) {
     data-members-settings
   >
     <p class="text-xs text-muted">
-      Everyone on the team sees the board. Managers see and change the project's secrets and decide who is on the project.
-      The project owner and the team's owners and admins are managers.
+      People added here can see this project's secrets: Members only the ones shared with them, Managers all of them. Board access comes from the team.
     </p>
 
     <p
@@ -181,13 +202,53 @@ async function remove(person: ProjectPerson) {
       Loading the members...
     </p>
 
-    <p
+    <div
       v-else-if="personal"
-      class="rounded-xl border border-default bg-default p-3 text-sm text-muted"
+      class="space-y-3 rounded-xl border border-default bg-default p-3 text-sm text-muted"
       data-members-personal
     >
-      This is a personal project, so only its owner is on it. To share it, move it to a team project.
-    </p>
+      <p>This is a personal project, so only its owner is on it.</p>
+      <div
+        v-if="teams.length"
+        class="flex flex-wrap items-end gap-2"
+      >
+        <label
+          v-if="teams.length"
+          class="block text-sm"
+        >
+          <span class="text-muted">Team</span>
+          <select
+            :value="teamForNew"
+            class="mt-1 block rounded-lg border border-default bg-default px-3 py-2 text-sm text-default outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            data-members-team-pick
+            @change="pickTeam"
+          >
+            <option
+              v-for="team in teams"
+              :key="team.id"
+              :value="team.id"
+            >
+              {{ team.name }}
+            </option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+          :disabled="startingTeamProject"
+          data-members-create-team-project
+          @click="startTeamProject"
+        >
+          Create a team project
+        </button>
+        <p class="w-full text-xs text-dimmed">
+          This switches you to that team and opens a new project form.
+        </p>
+      </div>
+      <p v-else>
+        To share a project with others, join a team: open the team switcher at the bottom left and choose Join Team with Code.
+      </p>
+    </div>
 
     <template v-else-if="people.length">
       <ul
@@ -275,6 +336,13 @@ async function remove(person: ProjectPerson) {
               </button>
             </template>
           </div>
+          <p
+            v-if="canManage && person.role === null"
+            class="w-full text-xs text-dimmed"
+            data-member-hint
+          >
+            Add as manager to see secrets
+          </p>
         </li>
       </ul>
 

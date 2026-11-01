@@ -178,7 +178,7 @@ async function pickCustomer(customerId: string | null, customerName: string | nu
 
 const customerMenu = computed(() => [
   [{
-    label: 'Internal project',
+    label: 'Team only',
     icon: 'i-lucide-lock',
     onSelect: () => pickCustomer(null, null)
   }],
@@ -251,7 +251,7 @@ useSeoMeta({
           :icon="activeProject?.customerId ? 'i-lucide-building-2' : 'i-lucide-lock'"
           class="shrink-0"
         >
-          {{ activeProject?.customerName ?? 'Internal' }}
+          {{ activeProject?.customerName ?? 'Team only' }}
         </UButton>
       </UDropdownMenu>
       <UBadge

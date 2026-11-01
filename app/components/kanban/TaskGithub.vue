@@ -20,8 +20,8 @@ const removeError = ref('')
 const removeBusy = ref(false)
 
 const visibilityItems = [
-  { label: 'Internal', value: 'internal' },
-  { label: 'Customer', value: 'customer' }
+  { label: 'Team only', value: 'internal' },
+  { label: 'Shared with customer', value: 'customer' }
 ]
 
 // The project default applies once the settings are read; the user can change it per link.

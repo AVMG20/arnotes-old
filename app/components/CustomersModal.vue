@@ -178,7 +178,7 @@ async function handleConfirm() {
 function confirmDelete(id: string, name: string) {
   confirmRequest.value = {
     title: `Remove ${name}?`,
-    description: 'Its projects stay in the organisation as internal projects. Its contacts lose access and open invitation links stop working.',
+    description: 'Its projects stay in the team as team-only projects. Its contacts lose access and open invitation links stop working.',
     confirmLabel: 'Remove customer',
     action: async () => {
       await deleteCustomer(id)
@@ -219,7 +219,7 @@ function confirmRevoke(customerId: string, invitation: CustomerInvitation) {
     <UModal
       v-model:open="open"
       :title="activeTeam ? `Customers of ${activeTeam.name}` : 'Customers'"
-      description="Customers group projects and log in to follow them. They see only what you mark as visible to the customer."
+      description="Customers group projects and log in to follow them. They see only the tasks you share with them."
       :ui="{ content: 'sm:max-w-2xl' }"
     >
       <template #body>
@@ -240,9 +240,12 @@ function confirmRevoke(customerId: string, invitation: CustomerInvitation) {
               :loading="creating"
               :disabled="!newName.trim()"
             >
-              Add
+              Add customer
             </UButton>
           </form>
+          <p class="min-h-4 text-xs text-muted">
+            {{ canManageCustomers ? '' : 'Only team owners and admins add customers and send links. Ask a team admin if you need one.' }}
+          </p>
 
           <p
             v-if="customers.length === 0"
@@ -381,6 +384,9 @@ function confirmRevoke(customerId: string, invitation: CustomerInvitation) {
                   >
                     <p class="text-xs font-semibold uppercase tracking-wider text-muted">
                       Invitation links
+                    </p>
+                    <p class="text-[11px] text-muted">
+                      Make a link and send it to the customer yourself. Nothing is emailed.
                     </p>
                     <div
                       v-for="inv in invitations"

@@ -241,13 +241,13 @@ const hasMeta = computed(() =>
         <span
           v-if="internal"
           class="flex items-center gap-1 text-warning"
-          title="Internal: the customer does not see this task"
+          title="Team only: the customer does not see this task"
         >
           <UIcon
             name="i-lucide-lock"
             class="size-3"
           />
-          Internal
+          Team only
         </span>
 
         <span

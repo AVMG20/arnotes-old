@@ -36,6 +36,7 @@ const {
   updateTask,
   moveTask,
   deleteTask,
+  restoreTask,
   loadComments,
   clearComments
 } = useProjects()
@@ -385,11 +386,28 @@ const taskInternal = computed(() => shownTask.value?.visibility === 'internal')
 async function toggleTaskVisibility() {
   const task = props.task
   if (!task || readonly.value) return
+  const before = task.visibility
+  const next = before === 'internal' ? 'customer' : 'internal'
+  // The Undo toast is the safety net, so a change does not ask first.
   try {
-    await updateTask(task.id, { visibility: task.visibility === 'internal' ? 'customer' : 'internal' })
+    await updateTask(task.id, { visibility: next })
   } catch {
     toast.add({ title: 'Could not change who sees this task', icon: 'i-lucide-alert-triangle', color: 'error' })
+    return
   }
+  // The undo puts the task back the way it was; it does not ask again.
+  toast.add({
+    title: next === 'internal' ? 'Now team only: the customer cannot see this task.' : 'Now shared with the customer.',
+    duration: 6000,
+    actions: [{
+      label: 'Undo',
+      onClick: () => {
+        void updateTask(task.id, { visibility: before }).catch(() => {
+          toast.add({ title: 'Could not undo', icon: 'i-lucide-alert-triangle', color: 'error' })
+        })
+      }
+    }]
+  })
 }
 
 // ─── Move / delete ─────────────────────────────────────────
@@ -419,14 +437,20 @@ async function confirmDelete() {
   // Drop pending autosaves: the row is about to be gone.
   descDirty = false
   titleDirty = false
-  const title = props.task.title
   emit('close')
   await deleteTask(id)
   toast.add({
-    title: `"${title}" moved to trash`,
-    description: 'Restore it from Show trashed for the next 7 days.',
+    title: 'Task moved to Trash',
     icon: 'i-lucide-trash-2',
-    duration: 5000
+    duration: 10000,
+    actions: [{
+      label: 'Undo',
+      onClick: () => {
+        void restoreTask(id).catch(() => {
+          toast.add({ title: 'Could not undo', icon: 'i-lucide-alert-triangle', color: 'error' })
+        })
+      }
+    }]
   })
 }
 
@@ -559,10 +583,10 @@ const menuItems = computed(() => [[
             size="xs"
             :color="taskInternal ? 'warning' : 'neutral'"
             variant="soft"
-            :label="taskInternal ? 'Internal' : 'Customer can see'"
+            :label="taskInternal ? 'Team only' : 'Shared with customer'"
             :title="taskInternal
-              ? 'Only your organisation sees this task. Click to show it to the customer.'
-              : 'The customer and the public link see this task. Click to make it internal.'"
+              ? 'Only the team sees this task. Click to share it with the customer.'
+              : 'Shared with the customer and the public link. Click to make it team only.'"
             @click="toggleTaskVisibility"
           />
 
@@ -810,7 +834,7 @@ const menuItems = computed(() => [[
   <UModal
     v-model:open="deleteOpen"
     title="Delete task?"
-    description="It moves to the board's trash with its updates. Show trashed on the board can restore it for the next 7 days."
+    description="It moves to the board's trash with its updates. Project options > Show trashed can restore it for the next 7 days."
     :ui="{ footer: 'justify-end' }"
   >
     <template #footer>

@@ -156,10 +156,10 @@ function setValue(value: string) {
         Pick one
       </option>
       <option value="internal">
-        Internal
+        Team only
       </option>
       <option value="customer">
-        Customer
+        Shared with customer
       </option>
     </select>
 

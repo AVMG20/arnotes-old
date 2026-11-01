@@ -358,7 +358,7 @@ function commentMenu(comment: TaskComment) {
   const share = props.readonly
     ? []
     : [{
-        label: comment.visibility === 'internal' ? 'Show to customer' : 'Make internal',
+        label: comment.visibility === 'internal' ? 'Share with customer' : 'Make team only',
         icon: comment.visibility === 'internal' ? 'i-lucide-eye' : 'i-lucide-lock',
         onSelect: () => toggleCommentVisibility(comment)
       }]
@@ -475,13 +475,13 @@ defineExpose({ handleEscape })
                 <span
                   v-if="!readonly && comment.visibility === 'internal'"
                   class="flex shrink-0 items-center gap-0.5 text-[0.6875rem] text-warning"
-                  title="Internal: the customer does not see this comment"
+                  title="Team only: the customer does not see this comment"
                 >
                   <UIcon
                     name="i-lucide-lock"
                     class="size-3"
                   />
-                  Internal
+                  Team only
                 </span>
 
                 <UDropdownMenu
@@ -660,8 +660,8 @@ defineExpose({ handleEscape })
           :color="commentVisibility === 'internal' ? 'warning' : 'neutral'"
           variant="ghost"
           class="shrink-0"
-          :aria-label="commentVisibility === 'internal' ? 'Internal comment: click to show it to the customer' : 'Customer can see: click to make it internal'"
-          :title="commentVisibility === 'internal' ? 'Internal comment: click to show it to the customer' : 'Customer can see: click to make it internal'"
+          :aria-label="commentVisibility === 'internal' ? 'Team only: click to share it with the customer' : 'Shared with customer: click to make it team only'"
+          :title="commentVisibility === 'internal' ? 'Team only: click to share it with the customer' : 'Shared with customer: click to make it team only'"
           @click.stop="commentVisibility = commentVisibility === 'internal' ? 'customer' : 'internal'"
         />
         <UButton

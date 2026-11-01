@@ -295,7 +295,7 @@ async function save() {
         v-if="!canSetVisibility"
         class="text-xs text-muted"
       >
-        Setting a task internal or customer is for the project owner only, so that option is off here.
+        Choosing whether a task is team only or shared with the customer is for the project owner only, so that option is off here.
       </p>
       <p class="text-xs text-muted">
         If a step fails, the steps before it stay applied: they are not undone.

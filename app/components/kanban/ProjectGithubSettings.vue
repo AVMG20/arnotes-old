@@ -220,10 +220,10 @@ async function changeVisibility(row: LinkedRepo, event: Event) {
             @change="changeVisibility(row, $event)"
           >
             <option value="internal">
-              Internal
+              Team only
             </option>
             <option value="customer">
-              Customers see it
+              Shared with customer
             </option>
           </select>
 
@@ -300,10 +300,10 @@ async function changeVisibility(row: LinkedRepo, event: Event) {
             data-github-repo-visibility
           >
             <option value="internal">
-              Internal
+              Team only
             </option>
             <option value="customer">
-              Customers see it
+              Shared with customer
             </option>
           </select>
         </label>
@@ -333,10 +333,10 @@ async function changeVisibility(row: LinkedRepo, event: Event) {
           @change="saveDefaultVisibility"
         >
           <option value="internal">
-            Internal: customers do not see it
+            Team only: customers do not see it
           </option>
           <option value="customer">
-            Customer: customers see it
+            Shared with customer
           </option>
         </select>
       </label>
