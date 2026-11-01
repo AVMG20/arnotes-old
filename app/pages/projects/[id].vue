@@ -275,8 +275,8 @@ useSeoMeta({
       >
       <button
         v-else
-        class="min-w-0 flex-1 rounded px-1 py-0.5 text-left text-base font-semibold text-default transition-colors lg:flex-none lg:truncate max-lg:line-clamp-2 max-lg:break-words"
-        :class="isCustomerView ? 'cursor-default' : 'hover:bg-elevated'"
+        class="min-w-0 flex-1 rounded px-1 py-0.5 text-left text-base font-semibold text-default transition-colors lg:truncate"
+        :class="[isCustomerView ? 'cursor-default' : 'hover:bg-elevated', /\s/.test(activeProject?.name ?? '') ? 'max-lg:line-clamp-2 max-lg:break-normal' : 'max-lg:truncate']"
         :title="activeProject?.name"
         @click="startRename"
       >
