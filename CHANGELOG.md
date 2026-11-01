@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- On a phone, the project tab row fades at the edge where more tabs are hidden, and fades on the other side once you have scrolled, so it is clear that the row goes on
+
 - One pair of words for who sees a task: **Team only** and **Shared with customer**, everywhere in the app (it used to be Internal, Customer can see and Shared with the customer). Changing it on a task now shows a toast with Undo, deleting a task says where Trash is and offers Undo, a personal project's Members tab offers to start a team project, the Members badge reads "Can see board" instead of "No access", and the Customers dialog says who can add customers and that nothing is emailed
 - More usability fixes: the sidebar search says it finds tasks and boards, the Files tab says what it holds, the rules forms say why Create rule and New rule are off (one reserved line, so nothing jumps), and rule errors and the rule counter use the words of the form ("A task is moved to a column", "2 of 50 rules used")
 - Clearer forms and dialogs, from a usability review: greyed-out buttons say what is missing (repositories, secrets, API keys, goals, the project status update), a wrong join code gets a plain sentence, the team switcher says who creates teams, Team Settings explains the join code and roles, the Goals page says what a goal is and who sees it, the Inbox Agent audit tab explains agents and links to where they are set up, Settings → AI says which features use the key, and switching to the personal workspace no longer leaves a spinner on an empty board

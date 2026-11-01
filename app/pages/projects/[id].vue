@@ -53,6 +53,31 @@ function setView(key: string) {
   navigateTo({ path: route.path, query: { ...route.query, view: key === 'board' ? undefined : key } }, { replace: true })
 }
 
+// The tab row scrolls sideways on a phone. Its edges fade where tabs are cut off,
+// so it is clear that the row goes on.
+const tabsEl = ref<HTMLElement | null>(null)
+const moreLeft = ref(false)
+const moreRight = ref(false)
+function updateTabCues() {
+  const el = tabsEl.value
+  if (!el) return
+  moreLeft.value = el.scrollLeft > 1
+  moreRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+const tabsMaskStyle = computed(() => {
+  if (!moreLeft.value && !moreRight.value) return {}
+  const start = moreLeft.value ? 'transparent 0, black 2.5rem' : 'black 0'
+  const end = moreRight.value ? 'black calc(100% - 2.5rem), transparent 100%' : 'black 100%'
+  const mask = `linear-gradient(to right, ${start}, ${end})`
+  return { maskImage: mask, WebkitMaskImage: mask }
+})
+watch(visibleViews, () => nextTick(updateTabCues))
+onMounted(() => {
+  updateTabCues()
+  window.addEventListener('resize', updateTabCues)
+})
+onBeforeUnmount(() => window.removeEventListener('resize', updateTabCues))
+
 const loadFailed = ref(false)
 
 watch(projectId, async (id) => {
@@ -376,8 +401,11 @@ useSeoMeta({
 
     <!-- View tabs -->
     <nav
+      ref="tabsEl"
       class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-default px-4 lg:px-6"
       aria-label="Project views"
+      :style="tabsMaskStyle"
+      @scroll="updateTabCues"
     >
       <button
         v-for="v in visibleViews"
