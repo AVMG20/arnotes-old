@@ -92,7 +92,7 @@ function dropField(fieldId: string) {
   <div class="h-full overflow-y-auto px-4 pb-10 pt-6 lg:px-6">
     <div class="mx-auto grid max-w-5xl gap-8 lg:grid-cols-[12rem_1fr]">
       <nav
-        class="flex gap-1 overflow-x-auto lg:flex-col"
+        class="flex flex-wrap gap-1 lg:flex-col"
         aria-label="Settings sections"
       >
         <button
