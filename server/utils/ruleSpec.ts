@@ -131,7 +131,7 @@ function pickLabel(value: unknown, problems: string[], where: string): string | 
 
 function pickVisibility(value: unknown, problems: string[], where: string): Visibility | null {
   if (isOneOf(VISIBILITIES, value)) return value
-  problems.push(`Pick internal or customer for ${where}`)
+  problems.push(`Pick team only or shared with customer for ${where}`)
   return null
 }
 

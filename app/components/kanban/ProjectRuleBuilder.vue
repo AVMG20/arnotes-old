@@ -43,7 +43,7 @@ const CONDITIONS: Record<string, KindInfo> = {
   assigned_to: { label: 'It is assigned to someone, or to nobody', field: 'personOrNobody', key: 'assigneeId' },
   has_label: { label: 'It has a label', field: 'label', key: 'label' },
   has_due_date: { label: 'It has a due date (yes or no)', field: 'yesNo', key: 'value' },
-  visibility: { label: 'It is internal or customer', field: 'visibility', key: 'value' }
+  visibility: { label: 'It is team only or shared with customer', field: 'visibility', key: 'value' }
 }
 
 const ACTIONS: Record<string, KindInfo> = {
@@ -56,7 +56,7 @@ const ACTIONS: Record<string, KindInfo> = {
   add_label: { label: 'Add a label', field: 'label', key: 'label' },
   add_comment: { label: 'Add a comment', field: 'text', key: 'text' },
   create_subtask: { label: 'Create a subtask', field: 'text', key: 'title' },
-  set_visibility: { label: 'Set it internal or customer', field: 'visibility', key: 'value' }
+  set_visibility: { label: 'Set it team only or shared with customer', field: 'visibility', key: 'value' }
 }
 
 function kindList(table: Record<string, KindInfo>, disabled: (kind: string) => boolean = () => false) {
