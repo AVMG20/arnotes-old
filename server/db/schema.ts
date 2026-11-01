@@ -16,7 +16,9 @@ export const user = pgTable('user', {
   isInstanceAdmin: boolean('is_instance_admin').notNull().default(false),
   // Handed out by the instance admin. Without it a user can join organisations
   // and customer portals but cannot start an organisation of their own.
-  canCreateOrganizations: boolean('can_create_organizations').notNull().default(false)
+  canCreateOrganizations: boolean('can_create_organizations').notNull().default(false),
+  // The crew this account belongs to. NULL for people.
+  crewId: text('crew_id').references((): AnyPgColumn => crews.id, { onDelete: 'set null' })
 })
 
 export const session = pgTable('session', {
@@ -928,3 +930,25 @@ export const agentAudit = pgTable(
 )
 
 export type AgentAuditRow = typeof agentAudit.$inferSelect
+
+// A crew: one AI-agent team (its own team, customer and board) made through the
+// crew API. Crew accounts point at it through user.crewId.
+export const crews = pgTable(
+  'crews',
+  {
+    id: text('id').primaryKey(),
+    slug: text('slug').notNull().unique(),
+    name: text('name').notNull(),
+    teamId: text('team_id').notNull().references(() => organization.id, { onDelete: 'cascade' }),
+    boardId: text('board_id').references(() => projects.id, { onDelete: 'set null' }),
+    customerId: text('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+    product: json('product').$type<{ name: string, repo?: string, appUrl?: string }>(),
+    // The user whose crews:manage key created the crew.
+    createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    // NULL while the crew is live; set when it is disabled.
+    disabledAt: bigint('disabled_at', { mode: 'number' })
+  }
+)
+
+export type Crew = typeof crews.$inferSelect
