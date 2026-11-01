@@ -8,7 +8,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const kitDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
+export const kitDir = new URL('.', import.meta.url).pathname.replace(/\/$/, '')
 const home = resolve(process.env.CREW_HOME || kitDir)
 export const here = `${home}/`
 

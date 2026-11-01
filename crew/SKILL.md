@@ -10,8 +10,8 @@ customer's request, answers to the PM, the code review, and the publish. The kit
 agnostic: everything that belongs to one product lives in `crew.json` and
 `PROJECT-RULES.md`. The kit is served by Taskmanager (`/crew/kit.tar.gz`, `/crew/SKILL.md`). Board tool details are in the `taskmanager` skill (`/api/settings/skill`); do not repeat them here. Run the kit with `crew <who> <command>`, `crew listen`, `crew watch`.
 
-If `~/crew` is not set up yet, follow `~/crew/README.md` from step 1 and take the user through it.
-If it is, run `node ~/crew/watch.mjs` to see where the run stands.
+If the crew home (`$CREW_HOME`, or the kit folder when it is unset) is not set up yet, follow its `README.md` from step 1 and take the user through it.
+If it is, run `crew watch` to see where the run stands.
 
 ## Cast
 
@@ -49,7 +49,7 @@ Columns: Backlog, To do, In progress, **Verify**, **Ready for live**, **Done**, 
 
 ## Running it
 
-- **Launch** the agents with the prompts in `~/crew/PROMPTS.md` (`Agent`, `model: haiku`,
+- **Launch** the agents with the prompts in `$CREW_HOME/PROMPTS.md` (`Agent`, `model: haiku`,
   `run_in_background: true`). Order: PM first (plans), workers, then the code reviewer, then the
   tester when there is a dev copy to browse.
 - **Wake on hand-backs.** A background agent ends its turn after some minutes even when told to
