@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- A board that will not open in the current workspace says which team it belongs to when you are in that team, with a button that switches to it and opens the board. Project Settings moved from the last tab to a button in the header (at 1280 px the tab was cut off), and the settings sections wrap on a phone instead of scrolling sideways
+
 - Messages: Ctrl+Enter (Cmd+Enter on a Mac) posts a message or a reply, with a line under the box that says so. Project Members says what a team member who is not on the project can do ("Can see the board, not the secrets") and wraps on a phone. The rules builder and its error texts say "team only or shared with customer" instead of internal and customer
 
 - Subtasks through the agent tools: `create_task` takes `parent` (a card's id or link) and makes the new task a subtask in that card's panel, on its board and column, with its visibility and at the bottom of its list. `get_task` names the parent of a subtask and lists the subtasks of a card (id, title, assignee, done). `my_tasks` includes subtasks assigned to the key's owner, each with its parent, so `move_task`, `post_task_update` and `log_time` can be used on it by its own id.
