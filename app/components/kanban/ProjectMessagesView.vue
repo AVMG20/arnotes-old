@@ -31,6 +31,14 @@ const body = ref('')
 const posting = ref(false)
 const error = ref('')
 
+// The hint names the keys that post. Phones have no Ctrl or Cmd Enter, so the line
+// is kept (it does not jump) but only shown where a keyboard is the pointer.
+const POST_HINT = 'Press Ctrl+Enter (Cmd+Enter on a Mac) to post.'
+const keyboardDevice = ref(false)
+onMounted(() => {
+  keyboardDevice.value = window.matchMedia('(pointer: fine)').matches
+})
+
 async function post() {
   if (!body.value.trim() || posting.value) return
   posting.value = true
@@ -49,6 +57,7 @@ async function post() {
 const replyingTo = ref<string | null>(null)
 const replyBody = ref('')
 const replyError = ref('')
+const replyPosting = ref(false)
 
 function openReply(id: string) {
   replyingTo.value = replyingTo.value === id ? null : id
@@ -57,7 +66,8 @@ function openReply(id: string) {
 }
 
 async function sendReply(parentId: string) {
-  if (!replyBody.value.trim()) return
+  if (!replyBody.value.trim() || replyPosting.value) return
+  replyPosting.value = true
   replyError.value = ''
   try {
     await messages.add({ body: replyBody.value, parentId })
@@ -65,6 +75,8 @@ async function sendReply(parentId: string) {
     replyingTo.value = null
   } catch (e) {
     replyError.value = messages.messageOf(e, 'Could not post the reply')
+  } finally {
+    replyPosting.value = false
   }
 }
 
@@ -97,6 +109,8 @@ async function removeMessage(id: string, isThread: boolean) {
           placeholder="Start a conversation with the team…"
           class="mt-2 w-full resize-y bg-transparent text-sm leading-relaxed text-default outline-none placeholder:text-dimmed"
           data-msg-body
+          @keydown.ctrl.enter.prevent="post"
+          @keydown.meta.enter.prevent="post"
         />
         <div class="mt-2 flex items-center justify-end gap-3">
           <p
@@ -114,6 +128,13 @@ async function removeMessage(id: string, isThread: boolean) {
             data-msg-post
           />
         </div>
+        <p
+          class="mt-2 text-xs text-dimmed"
+          data-msg-hint
+          :class="keyboardDevice ? '' : 'invisible'"
+        >
+          {{ POST_HINT }}
+        </p>
       </form>
 
       <ul class="mt-5 space-y-4">
@@ -207,7 +228,16 @@ async function removeMessage(id: string, isThread: boolean) {
                 placeholder="Write a reply…"
                 class="w-full resize-y rounded-md border border-default bg-transparent p-2 text-sm text-default outline-none placeholder:text-dimmed focus:border-primary"
                 data-reply-body
+                @keydown.ctrl.enter.prevent="sendReply(message.id)"
+                @keydown.meta.enter.prevent="sendReply(message.id)"
               />
+              <p
+                class="mt-1.5 min-h-4 text-xs text-dimmed"
+                :class="keyboardDevice ? '' : 'invisible'"
+                data-reply-hint
+              >
+                {{ POST_HINT }}
+              </p>
               <div class="mt-1.5 flex items-center justify-end gap-2">
                 <p
                   v-if="replyError"
