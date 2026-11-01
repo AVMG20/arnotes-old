@@ -256,7 +256,7 @@ useSeoMeta({
       >
       <button
         v-else
-        class="min-w-0 truncate rounded px-1 py-0.5 text-base font-semibold text-default transition-colors"
+        class="min-w-0 flex-1 rounded px-1 py-0.5 text-left text-base font-semibold text-default transition-colors lg:flex-none lg:truncate max-lg:line-clamp-2 max-lg:break-words"
         :class="isCustomerView ? 'cursor-default' : 'hover:bg-elevated'"
         :title="activeProject?.name"
         @click="startRename"
@@ -291,7 +291,7 @@ useSeoMeta({
       </UBadge>
 
       <span
-        class="shrink-0 text-xs text-dimmed"
+        class="shrink-0 text-xs text-dimmed max-sm:hidden"
         :title="taskCountTitle"
       >
         {{ taskCountText }} {{ taskCount === 1 ? 'task' : 'tasks' }}

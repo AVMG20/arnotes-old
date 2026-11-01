@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- On a phone, a long project name in the header wraps to two lines instead of being cut to "S…" (the full name is in the tooltip), and the task count steps aside to make room
+
 - On a phone, the description toolbar fades where commands are cut off, and focusing the description no longer scrolls its sticky toolbar out of view. The secrets list says that the downloaded `.env` is written for shells and Docker Compose, and the `get_project_env` tool description says the same
 
 - On a phone, the project tab row fades at the edge where more tabs are hidden, and fades on the other side once you have scrolled, so it is clear that the row goes on
