@@ -50,7 +50,8 @@ export interface CrewInput {
 /** Who made the call: the key's owner, the key, and its name as the owner sees it. */
 export interface CrewCaller {
   userId: string
-  keyId: string
+  // Null for a call from the instance admin's Crews page (a session, not a key).
+  keyId: string | null
   keyName: string
 }
 
@@ -293,7 +294,7 @@ async function rotateCrew(crew: Crew) {
     minted.set(person.key, { password, apiKey })
   }
 
-  if (crew.disabledAt) await db.update(crews).set({ disabledAt: null }).where(eq(crews.id, crew.id))
+  if (crew.disabledAt) await enableCrew(crew)
   const [fresh] = await db.select().from(crews).where(eq(crews.id, crew.id))
   return await secretsResponse(fresh!, minted)
 }
@@ -396,4 +397,12 @@ export async function audited<T>(
     await recordCrewCall(caller, action, slug, `refused: ${message}`)
     throw error
   }
+}
+
+/**
+ * Lets a disabled crew sign in and use its keys again. The keys revoked at disabling are not
+ * brought back: rotate the crew (the crew API, rotate: true) to get new ones.
+ */
+export async function enableCrew(crew: Crew) {
+  await db.update(crews).set({ disabledAt: null }).where(eq(crews.id, crew.id))
 }
