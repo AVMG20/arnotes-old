@@ -11,6 +11,7 @@ import * as schema from '../db/schema'
 import { mailEnabled, sendMail } from './mailer'
 import { eq } from 'drizzle-orm'
 import { ensureOwnerOrganization, invitationTokenFrom, isFirstUser, isLiveInvitation } from '../utils/ownerOrganization'
+import { isInvalidDomain } from '../utils/crewAccounts'
 
 const baseURL = process.env.BETTER_AUTH_URL || 'http://localhost:3000'
 
@@ -140,6 +141,15 @@ export const auth = betterAuth({
   },
   databaseHooks: {
     user: {
+      update: {
+        // A change of address meets the same rule as a sign-up, so a future change-email
+        // feature cannot reach an .invalid address around the creation check above.
+        async before(data) {
+          if (data.email && isInvalidDomain(data.email)) {
+            throw new APIError('BAD_REQUEST', { message: 'That address cannot be used.' })
+          }
+        }
+      },
       create: {
         // Every way of creating an account ends here: password, email code,
         // OAuth, OIDC. The first account always gets in and runs the instance;
@@ -147,6 +157,11 @@ export const auth = betterAuth({
         // customer invitation, carried in a cookie through the sign-up or the
         // OAuth round trip.
         async before(user, ctx) {
+          // The reserved .invalid space is for crew accounts, which the crew provisioning
+          // makes in-process (utils/crewAccounts.ts). No public route may make one.
+          if (isInvalidDomain(user.email)) {
+            throw new APIError('BAD_REQUEST', { message: 'That address cannot be used.' })
+          }
           const first = await isFirstUser()
           if (!first && signUpDisabled && !(await isLiveInvitation(invitationTokenFrom(ctx?.headers ?? ctx?.request?.headers)))) {
             throw new APIError('FORBIDDEN', { message: 'Sign-up is closed here. Ask for an invitation link.' })
