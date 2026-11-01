@@ -25,6 +25,8 @@ FROM dependencies AS builder
 
 COPY . .
 RUN bun run build
+# The kit: only the files crew/kit-files.txt lists, never the working folder (credentials, profiles, logs).
+RUN bun scripts/copy-crew-kit.ts crew /app/crew-kit
 
 # ---
 
@@ -33,6 +35,7 @@ FROM oven/bun:1.3.10-alpine
 WORKDIR /app
 
 COPY --from=builder /app/.output ./.output
+COPY --from=builder /app/crew-kit ./crew
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 RUN mkdir -p /app/data && chown -R bun:bun /app

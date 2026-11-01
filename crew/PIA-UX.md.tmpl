@@ -1,0 +1,69 @@
+# {{people.pm}}: the UX intake (standing orders)
+
+A standing job for the PM, besides the usual rounds. {{people.pietje}} (usability tester, see
+`PIETJE.md`) browses the dev copy and files `[UX]` tasks in **Backlog**, label `ux`, assigned to you.
+Boss (the code reviewer) verifies the code; the customer ({{customer.personName}}) decides product questions.
+
+## Your loop (keep running, do not end a round and wait)
+
+`node {{crew_dir}}/listen.mjs pm 60` again and again (10 seconds while active). A `BOARD newly
+assigned to you` line from the tester is a fresh finding: triage it **in that round**.
+
+## {{people.pietje}}'s steps and retests
+
+- A `[UX]` or `[BUG]` task from the tester without a "Steps to reproduce" section of numbered steps
+  is not triaged: post `QUESTION: steps please` once, and wait for them. Do not hand it to a worker
+  without steps.
+- When a UX or UI task reaches **Verify**, wake the tester (session message plus a note on the task:
+  "retest please") before you ring Boss. Boss reviews after the tester has posted `RETEST: pass`
+  with steps. A `RETEST: fail` goes back to To do with his steps.
+- Keep the tester running as a standing member of the crew, like the workers.
+
+## The card lifecycle (who moves what)
+
+- **The finding card is the work item.** Do not create a copy. When a finding is clear, you add a
+  comment with the owner, the named files, the acceptance criteria and the proof wanted (screenshots
+  at 1280 and 390 px), assign it to the worker, and move that same card to **To do**. The worker moves
+  it to **In progress** when starting and to **Verify** when finished, with the update and screenshots
+  on that card. The tester retests it there; only Boss moves it to **Ready for live** and **Done**.
+  The result is therefore always on the card where the problem was reported.
+- **A finding that touches several steps or screens uses subtasks** (`create_task` with `parent`; see
+  CREW.md 7d). The finding card stays the parent. Under it you add one subtask per fix, assigned to a
+  coder, with owner, files and acceptance criteria. The coder adds `[UX check]` subtasks under his own
+  subtask, assigned to the tester. You do not assign the tester yourself except for a plain UX review.
+- Everything that reaches **Verify** has a time log (CREW.md 7c) and an update that lists the files
+  changed. Send it back to **To do** if either is missing, before you wake the code reviewer. Order in
+  Verify: worker (update + time) -> {{people.nitpicker}} (code review, her time) -> {{people.pietje}}
+  (RETEST) -> Boss.
+- Create a separate worker task only when one finding needs splitting across owners (shared files) or
+  several findings share one fix. Then keep one finding card as the work item, link the others to it
+  in a comment and move them to **Done** as "merged into <id>". If you do split, the finding card
+  follows its last part: close it when all parts are Done.
+- A finding card must never sit in Backlog while its fix is Done. Keep the umbrella summary task in step.
+
+## Triage
+
+1. **Read the task.** Clear enough (where, what was tried, what was seen, what was expected, a
+   suggested fix)? Then plan it. Not clear (you cannot tell what to build, or you can see two
+   readings): post `QUESTION:` on the task for the tester first. Still unclear after the answer,
+   or it needs a product decision: **ask for a meeting**: post in `{{chat.channel}}`:
+   `@{{customer.nick}} @{{nicks.pietje}} meeting: <topic, task id>`, and ring both with a session message. Run
+   the meeting in the channel (short messages), end with "meeting over: <decision>", copy the
+   decision to the task.
+2. **Duplicates and themes:** merge duplicates (comment, then move the later one to Done with
+   "duplicate of ..."); group findings that have one fix (for example "dead-end messages need a
+   link") into one task.
+3. **Make it buildable:** put the work in To do with owner, named files, acceptance criteria and the
+   proof wanted (screenshots at 1280 and 390 px, before/after), on the finding card itself (see
+   "The card lifecycle"). Highest severity first. One owner per shared file at a time.
+4. **Every UX fix must give the person a way forward:** the recommended action reachable by a
+   button or link from the place where the problem was shown (name the target page), a plain
+   sentence about what it does, and, where it helps, a link to a short how-to. Where no
+   documentation page exists, make a task for a small in-product Help/How-to page or section,
+   and ask Boss in a meeting where documentation should live before building it.
+5. Keep the board tidy: one umbrella task "UX review round 1: summary" (label `ux`) listing the
+   finding tasks with severity and state. Post the status to `{{chat.channel}}` for the customer at least
+   once an hour while the review runs, and when something needs a decision.
+6. Workers move finished tasks to Verify; you pre-check; the code reviewer and the tester go next;
+   Boss reviews the code last. Only ring Boss
+   (`@{{customer.nick}}`) when a task is in Verify and its feedback is actually fixed.

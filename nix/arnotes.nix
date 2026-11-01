@@ -27,8 +27,18 @@ stdenv.mkDerivation (finalAttrs: {
           "dist"
           "data"
           "result"
+          # A crew kit's runtime state and credentials, never part of the package.
+          "creds.json"
+          "crew.json"
+          "crew.config.json"
+          "profiles"
+          ".listen"
+          "work"
+          "backups"
+          ".watch-state.json"
         ]
         || base == ".env"
+        || lib.hasSuffix ".env" base
         || (lib.hasPrefix ".env." base && base != ".env.example")
       );
   };
@@ -54,12 +64,16 @@ stdenv.mkDerivation (finalAttrs: {
 
     mkdir -p "$out/lib/arnotes"
     cp -r .output "$out/lib/arnotes/.output"
+    # The kit: only the files crew/kit-files.txt lists (the same list the Dockerfile and the packer use).
+    mkdir -p "$out/lib/arnotes/crew"
+    bun scripts/copy-crew-kit.ts crew "$out/lib/arnotes/crew"
 
     mkdir -p "$out/bin"
     makeWrapper "${bun}/bin/bun" "$out/bin/arnotes" \
       --set-default NODE_ENV production \
       --set-default HOST 0.0.0.0 \
       --set-default PORT 3000 \
+      --set-default CREW_KIT_DIR "$out/lib/arnotes/crew" \
       --add-flags "$out/lib/arnotes/.output/server/index.mjs"
 
     runHook postInstall

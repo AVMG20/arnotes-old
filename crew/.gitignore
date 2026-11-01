@@ -1,0 +1,10 @@
+# Never commit these: they hold passwords, API keys, session cookies and run output.
+creds.json
+profiles/
+work/
+backups/
+node_modules/
+*.log
+.listen/
+.watch-state.json
+.fontcache/

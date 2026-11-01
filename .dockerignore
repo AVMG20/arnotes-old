@@ -9,4 +9,16 @@ node_modules
 .env.*
 !.env.example
 *.log
+# Runtime state and secrets of a crew kit, in case they sit in the working copy.
+crew/creds.json
+crew/crew.json
+crew/crew.config.json
+crew/profiles
+crew/.listen
+crew/work
+crew/backups
+crew/node_modules
+crew/.watch-state.json
+crew/**/*.env
+**/*.env
 README.md
