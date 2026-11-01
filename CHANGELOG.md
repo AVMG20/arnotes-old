@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- On a phone, the description toolbar fades where commands are cut off, and focusing the description no longer scrolls its sticky toolbar out of view. The secrets list says that the downloaded `.env` is written for shells and Docker Compose, and the `get_project_env` tool description says the same
+
 - On a phone, the project tab row fades at the edge where more tabs are hidden, and fades on the other side once you have scrolled, so it is clear that the row goes on
 
 - One pair of words for who sees a task: **Team only** and **Shared with customer**, everywhere in the app (it used to be Internal, Customer can see and Shared with the customer). Changing it on a task now shows a toast with Undo, deleting a task says where Trash is and offers Undo, a personal project's Members tab offers to start a team project, the Members badge reads "Can see board" instead of "No access", and the Customers dialog says who can add customers and that nothing is emailed

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Extension } from '@tiptap/core'
 import type { Editor } from '@tiptap/core'
 import { CHART_TEMPLATE, MERMAID_TEMPLATE } from '~/utils/chart'
@@ -48,6 +48,29 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [html: string] }>()
 
 const editorRef = ref()
+
+// The command row scrolls sideways on a phone. Its edges fade where a command is cut off,
+// so it is clear that the row goes on (the same cue as the project tab row).
+const toolbarEl = ref<HTMLElement | null>(null)
+const toolbarMoreLeft = ref(false)
+const toolbarMoreRight = ref(false)
+function updateToolbarCues() {
+  const el = toolbarEl.value
+  if (!el) return
+  toolbarMoreLeft.value = el.scrollLeft > 1
+  toolbarMoreRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+const toolbarMaskStyle = computed(() => {
+  if (!toolbarMoreLeft.value && !toolbarMoreRight.value) return {}
+  const start = toolbarMoreLeft.value ? 'transparent 0, black 2.5rem' : 'black 0'
+  const end = toolbarMoreRight.value ? 'black calc(100% - 2.5rem), transparent 100%' : 'black 100%'
+  const mask = `linear-gradient(to right, ${start}, ${end})`
+  return { maskImage: mask, WebkitMaskImage: mask }
+})
+// The row is mounted with the editor, so measure again once it exists.
+watch(toolbarEl, () => nextTick(updateToolbarCues))
+onMounted(() => window.addEventListener('resize', updateToolbarCues))
+onBeforeUnmount(() => window.removeEventListener('resize', updateToolbarCues))
 const editor = computed(() => editorRef.value?.editor as Editor | undefined)
 
 const content = computed({
@@ -312,13 +335,18 @@ const suggestionItems = computed<any[][]>(() => [
       :mention="false"
       :extensions="extensions"
       :handlers="customHandlers"
-      class="rich-editor flex min-h-0 flex-1 flex-col overflow-y-auto"
+      class="rich-editor scroll-pt-[45px] flex min-h-0 flex-1 flex-col overflow-y-auto"
       @update:model-value="content = $event"
     >
       <!-- Fixed toolbar. The commands scroll sideways when the editor is
            narrow (the task drawer, a phone); the context actions stay put. -->
       <div class="sticky top-0 z-10 flex shrink-0 items-center gap-2 border-b border-default bg-default px-3 py-2">
-        <div class="scrollbar-hidden min-w-0 flex-1 overflow-x-auto">
+        <div
+          ref="toolbarEl"
+          class="scrollbar-hidden min-w-0 flex-1 overflow-x-auto"
+          :style="toolbarMaskStyle"
+          @scroll="updateToolbarCues"
+        >
           <UEditorToolbar
             :editor="ed"
             :items="fixedToolbarItems"

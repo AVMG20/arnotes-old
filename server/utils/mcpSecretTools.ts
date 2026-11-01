@@ -109,7 +109,7 @@ export const MCP_SECRET_TOOLS: McpToolDefinition[] = [
     name: 'get_project_env',
     title: 'Get a project\'s .env',
     audit: true,
-    description: 'The project\'s secrets as .env text (NAME=value lines, sorted by name): every secret you may read, or only the names given. The server cannot write files on the agent\'s machine, so write the returned text to the project\'s .env yourself, and make sure .env is git-ignored first. Do not paste values into task updates, messages or chat. The download is recorded in the project\'s trail.',
+    description: 'The project\'s secrets as .env text (NAME=value lines, sorted by name): every secret you may read, or only the names given. The server cannot write files on the agent\'s machine, so write the returned text to the project\'s .env yourself, and make sure .env is git-ignored first. Do not paste values into task updates, messages or chat. The download is recorded in the project\'s trail. Written for shells and Docker Compose: the node dotenv package reads backslashes and \\$ differently.',
     scope: 'secrets:read',
     readOnly: true,
     inputSchema: {

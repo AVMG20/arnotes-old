@@ -413,7 +413,7 @@ function eventText(event: SecretEvent): string {
           <div class="flex flex-wrap items-start gap-3">
             <p class="min-w-0 flex-1 text-xs text-muted">
               <template v-if="canManage">
-                Values are encrypted and never shown in this list. Managers see every secret, members only those shared with them.
+                Values are encrypted and never shown in this list. Managers see every secret, members only those shared with them. The downloaded .env is written for shells and Docker Compose. Other tools, such as the Node dotenv package, may read values that contain a backslash or a dollar sign differently.
               </template>
               <template v-else-if="archived">
                 This project is archived, so its secrets are read-only.
