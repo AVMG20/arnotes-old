@@ -6,7 +6,7 @@
 // .tmpl, not the output) but never PROJECT-RULES.md or BRIEF.md once they exist.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
-import { config, here, templateValues } from './config.mjs'
+import { config, here, kitDir, templateValues } from './config.mjs'
 
 const ok = m => console.log(`  ok   ${m}`)
 const warn = m => console.log(`  WARN ${m}`)
@@ -54,7 +54,8 @@ mkdirSync(`${here}backups`, { recursive: true })
 const values = templateValues()
 const render = text => text.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (all, key) => (key in values ? values[key] : all))
 
-for (const file of readdirSync(here).filter(f => f.endsWith('.tmpl'))) {
+// The templates ship in the kit folder; the documents are written to CREW_HOME.
+for (const file of readdirSync(kitDir).filter(f => f.endsWith('.tmpl'))) {
   const out = file.replace(/\.tmpl$/, '')
   if (out === 'fonts.conf') {
     if (!config.fontDir) continue
@@ -64,11 +65,14 @@ for (const file of readdirSync(here).filter(f => f.endsWith('.tmpl'))) {
     ok(`${out} exists, kept`)
     continue
   }
-  const text = render(readFileSync(`${here}${file}`, 'utf8'))
+  const text = render(readFileSync(`${kitDir}/${file}`, 'utf8'))
   const left = text.match(/\{\{[^}]+\}\}/g)
   writeFileSync(`${here}${out}`, text)
   ok(`${out}${left ? `  (unfilled: ${[...new Set(left)].join(' ')})` : ''}`)
 }
 
-console.log(failed ? '\nFix the FAIL lines above, then run init again.' : '\nInit done. Next: node setup.mjs (see README.md, step 5).')
+const next = existsSync(`${here}creds.json`)
+  ? `\nInit done. Next: run the tools (README.md, step 4), then launch the agents from ${here}PROMPTS.md.`
+  : 'No creds.json yet: make the crew (see README.md), then run init again.'
+console.log(failed ? '\nFix the FAIL lines above, then run init again.' : `\nInit done. ${next}`)
 process.exit(failed ? 1 : 0)
