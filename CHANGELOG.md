@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- On a phone, Settings is an entry in the Project options menu (the gear without a word is gone), and a long project name wraps at word boundaries or, without spaces, ends in an ellipsis; the buttons stay on screen at every width. The task's visibility button explains what sharing with the customer does, including that the task shows on the board's public link when the board is shared
+
 - A board that will not open in the current workspace says which team it belongs to when you are in that team, with a button that switches to it and opens the board. Project Settings moved from the last tab to a button in the header (at 1280 px the tab was cut off), and the settings sections wrap on a phone instead of scrolling sideways
 
 - Messages: Ctrl+Enter (Cmd+Enter on a Mac) posts a message or a reply, with a line under the box that says so. Project Members says what a team member who is not on the project can do ("Can see the board, not the secrets") and wraps on a phone. The rules builder and its error texts say "team only or shared with customer" instead of internal and customer
