@@ -71,7 +71,8 @@ export function peerOf(event: H3Event, bun = runningUnderBun(event)): Peer {
     if (typeof socket.remoteAddress === 'string' && socket.remoteAddress) {
       return { kind: 'tcp', address: socket.remoteAddress }
     }
-    // A unix socket has neither an address nor a port.
+    // Under Node a unix socket has neither an address nor a port.    // Under Bun the socket is a stub that says nothing about the caller, whatever its port.
+    if (bun) return { kind: 'unseen' }
     return socket.remotePort === undefined ? { kind: 'unix' } : { kind: 'unknown' }
   }
   // A Bun runtime that exposes its server: the TCP peer is known; no address means a unix socket.
