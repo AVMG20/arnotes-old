@@ -11,7 +11,7 @@ import type { ApiKeyContext } from './api-keys'
 import { audienceOf, boardFilter, readableTasksIn, requireStaffAudience } from './mcpAccess'
 import { commentVisibilityFilter, taskVisibilityFilter } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
-import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks, RESTORED } from './projects'
+import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks, RESTORED, nextSubtaskPosition, subtasksOrdered } from './projects'
 import { ACCENT_COLORS, isAccentColor } from '#shared/utils/colors'
 import { McpToolError, asToolError, asToolErrorAsync, excerpt, idFromReference, newId, optionalBoolean, optionalLimit, optionalString, optionalStringArray, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
@@ -279,6 +279,7 @@ function taskCard(task: ProjectTask, options: {
   updates?: number
   terms?: string[]
   column?: string
+  parent?: string
   board?: string
   people?: Map<string, string>
   fields?: Record<string, string | number>
@@ -290,6 +291,7 @@ function taskCard(task: ProjectTask, options: {
     id: task.id,
     ...(options.board ? { board: options.board } : {}),
     ...(options.column ? { column: options.column } : {}),
+    ...(options.parent ? { parent: options.parent } : {}),
     title: task.title,
     labels: task.tags,
     // Like the update count, a field nobody has filled in is left out.
@@ -341,6 +343,9 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
     description: task.description ? htmlToMarkdown(task.description) : '',
     // The GitHub links the caller may see, with what GitHub says about each (see githubTaskLinks).
     github: (await readTaskGithubLinks({ taskId: task.id, audience })).links,
+    // The subtasks the caller may see; a subtask names its parent.
+    subtasks: await subtaskCards(task, board, context),
+    ...(task.parentTaskId ? { parent: task.parentTaskId } : {}),
     createdAt: new Date(task.createdAt).toISOString(),
     updatedAt: new Date(task.updatedAt).toISOString(),
     // Update bodies are stored as the inline Markdown they were written in, by
@@ -358,6 +363,20 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
       replyTo: update.replyTo
     }))
   }
+}
+
+/** A task's live subtasks as the caller may see them: id, title, assignee and done state. */
+async function subtaskCards(task: ProjectTask, board: Project, context: ApiKeyContext) {
+  const audience = audienceOf(context, board)
+  const people = await peopleNames(board)
+  return (await subtasksOrdered(task.id))
+    .filter(sub => audience === 'staff' || sub.visibility === 'customer')
+    .map(sub => ({
+      id: sub.id,
+      title: sub.title,
+      ...(sub.assigneeId ? { assignee: people.get(sub.assigneeId) ?? sub.assigneeId } : {}),
+      completed: !!sub.completedAt
+    }))
 }
 
 // ─── ordering ─────────────────────────────────────────────────────────────────
@@ -524,6 +543,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
             .from(projectTasks)
             .where(and(
               inArray(projectTasks.columnId, columns.map(column => column.id)),
+              isNull(projectTasks.parentTaskId),
               isNull(projectTasks.deletedAt),
               taskVisibilityFilter(audienceOf(context, board))
             ))
@@ -535,7 +555,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const [total] = await db
         .select({ tasks: count() })
         .from(projectTasks)
-        .where(and(eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt), taskVisibilityFilter(audienceOf(context, board))))
+        .where(and(eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt), isNull(projectTasks.parentTaskId), taskVisibilityFilter(audienceOf(context, board))))
 
       // Clip each column before counting updates: the counts are only needed for
       // the tasks that make it into the answer.
@@ -647,6 +667,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         .from(projectTasks)
         .where(and(
           readableTasksIn(context, boards),
+          // Subtasks are reached through their card, not listed as cards of their own.
+          isNull(projectTasks.parentTaskId),
           isNull(projectTasks.deletedAt)
         ))
         .orderBy(asc(projectTasks.position))
@@ -1010,25 +1032,42 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'create_task',
     title: 'Create a task',
-    description: 'Create a task in a column. The description is Markdown and labels are the board\'s task labels (priority, workstream, …). New tasks go to the bottom of the column unless told otherwise.',
+    description: 'Create a task in a column. The description is Markdown and labels are the board\'s task labels (priority, workstream, …). New tasks go to the bottom of the column unless told otherwise. Pass "parent" to make a subtask of a card instead; it is kept in that card\'s panel, not on the board.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
       type: 'object',
       properties: {
-        board: { type: 'string', description: 'Board id or name.' },
-        column: { type: 'string', description: 'Column id or name, e.g. "Backlog".' },
+        board: { type: 'string', description: 'Board id or name. Required unless parent is given.' },
+        column: { type: 'string', description: 'Column id or name, e.g. "Backlog". Required unless parent is given; a subtask takes its parent\'s column.' },
         title: { type: 'string', description: 'Task title. Keep it short — detail belongs in the description.' },
         description: { type: 'string', description: 'Markdown description. Supports headings, lists, "- [ ]" checklists, tables and fenced code. A ```mermaid block is drawn as a diagram; a ```chart block is drawn as a bar, line or pie chart from lines like "type: bar", "labels: Jan, Feb" and "Sales: 12, 19".' },
         labels: { type: 'array', items: { type: 'string' }, description: 'Labels for the task, without the # prefix.' },
         position: { type: 'string', description: '"top" or "bottom" of the column. Defaults to "bottom".' },
         after: { type: 'string', description: 'Place the task directly after this task id instead.' },
+        parent: { type: 'string', description: 'The id, or a link, of a card to make this a subtask of. A subtask lives in its parent\'s panel: it takes the parent\'s board, column and visibility and goes to the bottom of the parent\'s subtasks.' },
         ...TASK_FIELD_PROPERTIES
       },
-      required: ['board', 'column', 'title']
+      required: ['title']
     },
     async handler(args, context) {
-      const board = await findBoard(requireString(args, 'board'), context)
+      // A subtask is made under a parent card: it takes that card's board and column and sits in its panel.
+      const parentRef = optionalString(args, 'parent')?.trim()
+      const parent = parentRef
+        ? await findTask(parentRef, context).catch((error: unknown) => {
+            // Missing, trashed and on a board the key cannot open read alike, so the answer does not show that the task exists.
+            if (error instanceof McpToolError) {
+              throw new McpToolError(`No task "${idFromReference(parentRef, 'task')}" you can open. It may be missing, in a board's trash, or on a board you cannot open.`)
+            }
+            throw error
+          })
+        : null
+      if (parent) requireStaffAudience(context, parent.board, 'making a subtask')
+      const board = parent ? parent.board : await findBoard(requireString(args, 'board'), context)
+      const boardRef = optionalString(args, 'board')
+      if (parent && boardRef !== undefined && (await findBoard(boardRef, context)).id !== board.id) {
+        throw new McpToolError('The parent task is not on that board: it is on ' + board.name + '.')
+      }
       // A customer's contact files a request; dates, assignee, the done mark and
       // custom fields are the team's to set, as they are in the app.
       if (audienceOf(context, board) === 'customer') {
@@ -1037,7 +1076,12 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
           throw new McpToolError(`You work on "${board.name}" as a customer, so you can file a task but not set its ${planning.join(', ')}: that is for the team.`)
         }
       }
-      const column = await findColumn(board, requireString(args, 'column'))
+      // A subtask sits in its parent's column, so a column named with one must be that column.
+      const columnRef = optionalString(args, 'column')
+      const column = await findColumn(board, parent ? parent.task.columnId : requireString(args, 'column'))
+      if (parent && columnRef !== undefined && (await findColumn(board, columnRef)).id !== column.id) {
+        throw new McpToolError('A subtask takes its parent\'s column: ' + column.name + '.')
+      }
       const title = requireString(args, 'title').trim()
       const markdown = optionalString(args, 'description') ?? ''
       const labels = normalizeLabels(optionalStringArray(args, 'labels') ?? [])
@@ -1056,8 +1100,9 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         description: markdown ? markdownToHtml(markdown) : '',
         tags: labels,
         ...fields,
+        ...(parent ? { parentTaskId: parent.task.id, visibility: parent.task.visibility } : {}),
         createdBy: context.userId,
-        position: await taskPosition(column.id, readPlacement(args), optionalString(args, 'after')),
+        position: parent ? await nextSubtaskPosition(parent.task.id) : await taskPosition(column.id, readPlacement(args), optionalString(args, 'after')),
         createdAt: now,
         updatedAt: now
       }).returning()
@@ -1073,7 +1118,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       return {
         created: true,
         board: { id: board.id, name: board.name },
-        task: taskCard(task!, { column: column.name, people: await peopleNames(board), fields: describeFieldValues(fieldDefs, storedValues) })
+        task: taskCard(task!, { column: column.name, parent: parent?.task.id, people: await peopleNames(board), fields: describeFieldValues(fieldDefs, storedValues) })
       }
     }
   },
