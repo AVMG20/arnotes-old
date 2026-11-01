@@ -316,6 +316,13 @@ async function changeVisibility(row: LinkedRepo, event: Event) {
           Add repository
         </button>
       </form>
+      <p
+        :class="newRepo.trim() ? 'invisible' : ''"
+        class="mt-2 text-xs text-muted"
+        data-github-add-hint
+      >
+        Write the repository as owner/repo, or paste its github.com link.
+      </p>
 
       <label class="mt-6 block max-w-xs text-sm">
         <span class="text-muted">Default visibility for new links</span>

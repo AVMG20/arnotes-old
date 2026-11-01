@@ -17,10 +17,12 @@ const route = useRoute()
 async function handleSelectTeam(id: string | null) {
   await setActiveTeam(id)
   await refreshProjects()
-  await refreshCustomers()
+  // Customers exist only in a team: a personal workspace answers 403 here, and that must
+  // not stop the move away from the old board below.
+  await refreshCustomers().catch(() => {})
   // The board that was open belongs to the workspace we just left; its route
   // would keep pointing at an id the new workspace does not have.
-  if (route.path.startsWith('/projects/')) navigateTo('/projects', { replace: true })
+  if (route.path.startsWith('/projects/')) await navigateTo('/projects', { replace: true })
 }
 
 const dropdownItems = computed<DropdownMenuItem[]>(() => {
@@ -47,6 +49,15 @@ const dropdownItems = computed<DropdownMenuItem[]>(() => {
         active: activeTeam.value?.id === t.id,
         onSelect: () => handleSelectTeam(t.id)
       })
+    })
+  }
+
+  // Only for people who cannot create teams: the sentence would contradict the Create Team entry.
+  if (!canCreateOrganizations.value) {
+    items.push({
+      slot: 'teams-hint',
+      // A click on the sentence keeps the menu open; only the link does anything.
+      onSelect: (event: Event) => event.preventDefault()
     })
   }
 
@@ -102,6 +113,19 @@ const dropdownItems = computed<DropdownMenuItem[]>(() => {
       :content="{ align: 'start', collisionPadding: 12 }"
       :ui="{ content: 'w-56' }"
     >
+      <template #teams-hint>
+        <p class="px-2 py-1.5 text-xs text-muted">
+          Teams are created by an admin. Have a join code?
+          <button
+            type="button"
+            class="text-primary hover:underline"
+            data-team-join-link
+            @click="showJoinModal = true"
+          >
+            Join a team
+          </button>
+        </p>
+      </template>
       <button class="flex w-full items-center gap-2 rounded-lg border border-default bg-elevated/50 px-2.5 py-1.5 text-xs text-default hover:bg-elevated transition-colors">
         <div class="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-primary font-medium">
           <UIcon

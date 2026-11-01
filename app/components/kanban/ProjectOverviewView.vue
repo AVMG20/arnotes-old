@@ -64,7 +64,7 @@ const statusMeta = (key: string) => STATUSES.find(status => status.key === key)
 
 async function postUpdate() {
   const status = activeProject.value?.status
-  if (!status || posting.value) return
+  if (!status || !updateDraft.value.trim() || posting.value) return
   posting.value = true
   postError.value = ''
   try {
@@ -123,19 +123,22 @@ const counts = computed(() => {
             data-update-input
           />
           <div class="mt-2 flex items-center justify-between gap-3">
-            <p class="text-xs text-muted">
-              <template v-if="activeProject?.status">
-                Posts as
-                <span class="font-medium text-default">{{ statusMeta(activeProject.status)?.label }}</span>
+            <p class="min-h-4 text-xs text-muted">
+              <template v-if="!activeProject?.status">
+                Choose a status first.
+              </template>
+              <template v-else-if="!updateDraft.trim()">
+                Write what changed, then Post update.
               </template>
               <template v-else>
-                Pick a status on the right first
+                Posts as
+                <span class="font-medium text-default">{{ statusMeta(activeProject.status)?.label }}</span>
               </template>
             </p>
             <UButton
               label="Post update"
               size="sm"
-              :disabled="!activeProject?.status"
+              :disabled="!activeProject?.status || !updateDraft.trim()"
               :loading="posting"
               data-update-post
               @click="postUpdate"

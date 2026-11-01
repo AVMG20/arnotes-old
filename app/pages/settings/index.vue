@@ -377,6 +377,14 @@ function swatchStyle(color: string, selected: boolean) {
               />
               <span class="text-xs font-semibold text-muted uppercase tracking-wider">AI (OpenRouter)</span>
             </div>
+            <p class="px-5 pt-3 text-xs text-muted">
+              The key powers the AI chat panel and the AI actions in the editor. Without a key, the chat asks you to add one, and the editor shows a message and stops. <a
+                href="https://openrouter.ai/"
+                target="_blank"
+                rel="noopener"
+                class="text-primary underline"
+              >What is OpenRouter?</a>
+            </p>
 
             <div class="divide-y divide-default">
               <!-- API key -->
@@ -409,6 +417,7 @@ function swatchStyle(color: string, selected: boolean) {
                     size="xs"
                     :loading="modelsRefreshing"
                     aria-label="Refresh OpenRouter models and pricing"
+                    title="Reload the model list and prices from OpenRouter"
                     @click="forceRefreshModelCatalog"
                   />
                 </div>

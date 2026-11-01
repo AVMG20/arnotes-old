@@ -93,13 +93,16 @@ function dueLabel(day: string) {
 
     <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 lg:px-6">
       <div class="mx-auto max-w-3xl">
+        <p class="mb-4 text-sm text-muted">
+          Goals group projects toward an outcome. In a team, everyone on the team sees them. In your personal workspace, only you do.
+        </p>
         <form
           class="mb-4 flex gap-2"
           @submit.prevent="add"
         >
           <UInput
             v-model="title"
-            placeholder="Add a goal, such as “Launch the new site”"
+            placeholder="Name the goal, such as “Launch the new site”"
             class="flex-1"
             :ui="{ root: 'w-full' }"
             data-goal-title
@@ -112,13 +115,19 @@ function dueLabel(day: string) {
             data-goal-add
           />
         </form>
+        <p
+          data-goal-hint
+          class="mt-1 min-h-4 text-xs text-muted"
+        >
+          {{ title.trim() ? 'Press Add goal to save it.' : 'Type the goal name to turn on Add goal.' }}
+        </p>
 
         <p
           v-if="!goals.length && !loading"
           class="rounded-xl border border-dashed border-default p-8 text-center text-sm text-muted"
           data-goals-empty
         >
-          Goals say what the work is for. Add one, then link the projects that move it.
+          No goals yet. Add one above, then open it and pick the projects that move it.
         </p>
 
         <ul class="space-y-2">

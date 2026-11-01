@@ -56,6 +56,14 @@ const createError = ref('')
 const joinCodeInput = ref('')
 const joinLoading = ref(false)
 const joinError = ref('')
+const joinInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
+
+// What each role may do in this dialog, and what the rotate endpoint allows.
+const ROLE_HINTS: Record<string, string> = {
+  owner: 'Owner: can transfer ownership, remove members and rotate the join code.',
+  admin: 'Admin: can remove members and rotate the join code.',
+  member: 'Member: cannot remove people or rotate the join code.'
+}
 
 // Copy code status
 const copiedCode = ref(false)
@@ -106,7 +114,14 @@ async function handleJoinTeam() {
     await refreshProjects()
     await refreshCustomers()
   } catch (e: unknown) {
-    joinError.value = (e as Error)?.message || 'Failed to join team'
+    // 404 is the server's wrong-code answer; anything else is a failure to reach it.
+    const status = (e as { statusCode?: number })?.statusCode
+    joinError.value = status === 404
+      ? 'That code is not valid. Ask the team owner for a new one.'
+      : 'Could not join. Try again.'
+    // The code stays in the field, so the person can fix it without clicking.
+    await nextTick()
+    joinInput.value?.inputRef?.focus()
   } finally {
     joinLoading.value = false
   }
@@ -338,6 +353,7 @@ function confirmDeleteTeam() {
             required
           >
             <UInput
+              ref="joinInput"
               v-model="joinCodeInput"
               placeholder="e.g. K3F9QX7BM2H8YRWZ"
               class="w-full font-mono uppercase"
@@ -499,11 +515,21 @@ function confirmDeleteTeam() {
             </div>
           </div>
 
+          <p class="-mt-2 text-xs text-muted">
+            Anyone signed in with this code can join. Owners and admins can rotate it, and the old code stops working at once.
+          </p>
+
           <!-- Members List -->
           <div class="space-y-2">
             <h3 class="font-medium text-default text-xs uppercase tracking-wider text-muted">
               Team Members
             </h3>
+            <p class="text-xs text-muted">
+              Every member of the team can see these email addresses.
+            </p>
+            <p class="text-xs text-muted">
+              Owner: can remove members, transfer ownership and rotate the join code. Admin: can remove members and rotate the join code. Member: cannot remove anyone or rotate the join code.
+            </p>
             <div
               v-if="activeTeamMembers.length === 0"
               class="py-4 text-center text-xs text-muted"
@@ -546,6 +572,7 @@ function confirmDeleteTeam() {
                     size="xs"
                     variant="subtle"
                     :color="m.role === 'owner' ? 'primary' : 'neutral'"
+                    :title="ROLE_HINTS[m.role]"
                   >
                     {{ m.role }}
                   </UBadge>

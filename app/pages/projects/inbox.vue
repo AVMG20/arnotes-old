@@ -333,7 +333,14 @@ async function sendTest() {
             class="mb-4 text-xs text-muted"
             data-agent-note
           >
-            Agent activity is only shown here. It never sends email or push.
+            An agent is a tool or script that works on your boards with an API key. Agent activity is only shown here, and it never sends email or push.
+            <NuxtLink
+              to="/settings"
+              class="text-primary hover:underline"
+              data-agent-manage
+            >
+              Manage agents
+            </NuxtLink>
           </p>
           <p
             v-if="auditLoaded && !agentShown.length"
@@ -381,7 +388,7 @@ async function sendTest() {
                     class="text-sm"
                     :class="item.readAt ? 'text-muted' : 'font-medium text-default'"
                   >
-                    <span class="text-xs font-normal text-muted">{{ item.keyName }} (agent)</span>
+                    <span class="text-xs font-normal text-muted">via API key {{ item.keyName }}</span>
                     {{ item.toolTitle }}
                   </p>
                   <p class="mt-0.5 line-clamp-2 text-xs text-muted">

@@ -4,6 +4,7 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- Clearer forms and dialogs, from a usability review: greyed-out buttons say what is missing (repositories, secrets, API keys, goals, the project status update), a wrong join code gets a plain sentence, the team switcher says who creates teams, Team Settings explains the join code and roles, the Goals page says what a goal is and who sees it, the Inbox Agent audit tab explains agents and links to where they are set up, Settings → AI says which features use the key, and switching to the personal workspace no longer leaves a spinner on an empty board
 - Comments sit under the description in the task drawer, with a box to write in; the Updates panel is gone and its log of changes is part of the thread. Every comment has Copy link (opens the task, scrolls to the comment and highlights it) and Reply (the reply says "In reply to", and clicking that jumps to the earlier comment). Agents can reply too: `post_task_update` takes `replyTo`, and `get_task` shows each comment's id and what it answers. A customer never sees an internal comment or its preview. The database gains `reply_to_id` on task comments.
 - The "No GitHub links yet" line no longer comes and goes while you type, so the description stops jumping
 

@@ -424,7 +424,7 @@ function eventText(event: SecretEvent): string {
             </p>
             <div
               v-if="canManage"
-              class="flex shrink-0 flex-wrap gap-2"
+              class="flex w-full flex-wrap items-start gap-2 sm:w-auto sm:shrink-0"
             >
               <button
                 type="button"
@@ -435,15 +435,24 @@ function eventText(event: SecretEvent): string {
               >
                 Import .env
               </button>
-              <button
-                type="button"
-                class="rounded-lg border border-default px-2.5 py-1.5 text-xs text-default hover:bg-elevated disabled:opacity-50"
-                :disabled="busy === 'download' || !secrets.length"
-                data-secret-download
-                @click="downloadEnv"
-              >
-                Download .env
-              </button>
+              <div class="flex max-w-[9rem] flex-col items-end gap-1">
+                <button
+                  type="button"
+                  class="rounded-lg border border-default px-2.5 py-1.5 text-xs text-default hover:bg-elevated disabled:opacity-50"
+                  :disabled="busy === 'download' || !secrets.length"
+                  data-secret-download
+                  @click="downloadEnv"
+                >
+                  Download .env
+                </button>
+                <p
+                  v-if="!secrets.length"
+                  class="text-right text-xs text-muted"
+                  data-secret-download-hint
+                >
+                  Nothing to download yet. Add a secret first.
+                </p>
+              </div>
               <button
                 type="button"
                 class="rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-white disabled:opacity-50"
@@ -528,6 +537,13 @@ function eventText(event: SecretEvent): string {
               </select>
             </label>
             <div class="flex justify-end gap-2 sm:col-span-2">
+              <p
+                :class="addForm.name.trim() ? 'invisible' : ''"
+                class="self-center text-xs text-muted"
+                data-secret-add-hint
+              >
+                Type a name to save the secret.
+              </p>
               <button
                 type="button"
                 class="rounded-lg px-3 py-2 text-sm text-muted hover:text-default"

@@ -315,6 +315,13 @@ function expiryLabel(key: ApiKeySummary): string {
           >
             Pick at least one permission.
           </p>
+
+          <p
+            data-key-hint
+            class="min-h-8 text-xs text-muted"
+          >
+            {{ newName.trim() ? 'Create key adds it to Active keys below.' : 'Name the key first, for example "Claude Code on my laptop", then the button turns on.' }}
+          </p>
         </div>
       </div>
 
