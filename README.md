@@ -439,6 +439,59 @@ Nothing reachable over MCP deletes anything permanently. `delete_column` and `de
 
 The setup guide also offers a copyable skill file that teaches an agent the conventions of the app, such as matching your existing labels and reading a task before editing it.
 
+### Crew API
+
+`/api/crews` creates and manages crews for the crew kit. It answers only a request that really comes from this machine: the socket peer is loopback and the request carries no `X-Forwarded-For`, `X-Real-IP` or `Forwarded` header, whatever its value or casing. Behind a reverse proxy every request counts as remote, and while the window is closed a remote request gets a plain `404` with no hint.
+
+To call it from elsewhere, an instance admin opens the window in Settings for 10 minutes (`POST /api/settings/crew-api-window`). Opening mints a temporary `crews:manage` key, shown once. While the window is open, remote callers may use only that key. The window closes at its end time, when the admin closes it, or at the first failed key on `/api/crews`: a bad, expired, wrong-scope or non-admin key closes it, whether the caller is local or remote. A failed key also revokes the temporary key and records the reason and the caller's address. The window row is cached for at most two seconds. The process that closes the window clears its cache at once; another process reads the close within those two seconds.
+
+Operator notes:
+
+- The proxy overwrites only `X-Real-IP` and `X-Forwarded-For`. The gate also refuses `Forwarded`, so a client cannot pass as local by sending it.
+- A unix-socket peer counts as local only when `CREW_API_TRUST_SOCKET=true`. The app user and root can reach that socket, so the `crews:manage` key stays the real check, not the socket.
+- The window state is kept in the database, so a restart neither leaves it open nor loses the reason it closed.
+- Refused calls are audited (peer, method, path, outcome, never the key text). A call that closes the window is written at once; the others are written in batches once a second. Rows are kept 90 days. If more than 1000 rows wait within one second the extra rows are dropped and counted (`auditQueue.dropped` in the window status). The waiting rows are written on shutdown, with a two-second limit, only where the server's graceful shutdown runs them. The node preset runs it; the Bun preset's runtime does not register it (checked in the nitropack source, not on a running server), so under Bun a stop can lose the rows of its last second. The window status (`GET /api/settings/crew-api-window`) counts the failed writes (`auditQueue.failedRows`, `auditQueue.closingFailed`) and the prune runs and failures (`auditQueue.pruneRuns`, `auditQueue.pruneFailures`).
+
+Rate limits are kept in buckets, one per caller, for ten refusals a minute. A local caller is counted under its peer; a remote caller under the client address nginx passed on in `X-Real-IP` (cleaned, and falling back to the peer when absent). A local bucket past its limit gets `429`. A remote bucket past its limit keeps getting the plain `404` and is not counted further, so traffic from the internet cannot lock out the local caller.
+
+Checking the gate on a server, one curl each (replace the host and socket path):
+
+- The production check, over the unix socket the app listens on: `curl -s -o /dev/null -w "%{http_code}\n" --unix-socket /path/to/taskmanager.sock http://localhost/api/crews`. Expect `401`: the switch is on, a socket path (`SOCKET` or `NITRO_UNIX_SOCKET`, non-blank) or the marker `BLAZE_UNIX_LISTENER=1` is set, and the curl sends no forwarding header, so the call counts as local and the key check ran. Without the switch, or without a socket path or the marker, expect `404`.
+- Through the reverse proxy, with no forwarding header at all: `curl -s -o /dev/null -w "%{http_code}\n" https://taskmanager.example.com/api/crews`. Expect `404`: the proxy lines add the headers, so the call is remote and the window is closed. A `401` means that location does not set the lines, so its callers count as local there. Fix the location before the switch stays on.
+- Straight to a TCP port, only on a deployment that has one (a node preset or a dev server): `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3000/api/crews`. `401` means the loopback peer counted as local.
+
+Deploy note for nginx. Every location that reaches the app needs these two lines (the public vhost, each per-agent loopback vhost, and each tunnel):
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+
+Use `$remote_addr`, not `$proxy_add_x_forwarded_for`. The latter keeps whatever `X-Forwarded-For` the client sent and appends to it, so a client could choose the address the limiter sees. With `$remote_addr` nginx sends the address of the socket it accepted, which the client cannot change.
+
+These two lines are mandatory, not a given. With the switch on and a socket path or the marker set, a request that carries no forwarding header is local, and the gate does not look at the client address. A location that does not set both lines lets internet callers in as local: they skip the closed-window `404` and share the local rate bucket, where they can cause `429`s for the real local caller. Set both lines in every location that reaches the app.
+
+Verify with one curl, through the public address, sending a made-up address:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -H "X-Real-IP: 192.0.2.99" https://taskmanager.example.com/api/crews
+```
+
+It must print `404`. Then open the Crews status as the instance admin (`GET /api/settings/crew-api-window`): the newest audit row's peer must read `unix (client <your public address>)`, not `192.0.2.99`. If it shows `192.0.2.99`, the `X-Real-IP` line is not in that location.
+
+Two more facts for this deploy:
+
+- Requests that reach the app through a loopback vhost, such as a per-agent vhost, carry `X-Real-IP 127.0.0.1`. All of them therefore share the remote bucket `127.0.0.1`. That is intended: they carry a forwarding header, so they are always treated as remote and never pass the gate on their own, and they cannot touch the local bucket.
+- The app must listen only through `Bun.serve`. A second listener opened outside it, for example with `node:http` `listen(port)`, opens a TCP path that the gate treats as loopback. Do not add one. Where the hosting platform replaces the TCP port with a unix socket, the gate reads that socket as a unix peer, and counts it as local only with `CREW_API_TRUST_SOCKET=true`.
+
+Under the Bun preset the app is not handed the socket a request came in on, so its peer is read as `unseen`. An unseen request counts as local only when three things hold. First, `CREW_API_TRUST_SOCKET` is the literal `true`. Second, the listener is one the operator has named as the socket: either the marker `BLAZE_UNIX_LISTENER=1` is set, or a socket path is set in the environment (`SOCKET` or `NITRO_UNIX_SOCKET`, non-blank). Third, the request carries no forwarding header. A socket path is the operator's statement that this process listens on that unix socket only. The marker is an environment signal: the Blaze preload sets `BLAZE_UNIX_LISTENER=1` once it has wrapped `Bun.serve` onto the socket. Nothing verifies it, and it covers `Bun.serve` only, not any other listener. Then the only callers able to reach the process are processes that can open that socket (root, the app user, nginx). The proxy lines in the deploy note keep internet traffic out of this path, and the `crews:manage` key stays the real check either way.
+
+If the switch is on but neither a socket path nor the marker is set, unseen requests stay remote (the `404`), and the process logs one error line at startup saying so. The process is not stopped. That is the case for the packaged Nix build, which listens on TCP (`HOST`, `PORT`) and has no socket variable. If the switch is on and a socket path or the marker is set, but the marker is not `1`, the process logs one info line: the marker is absent, and the socket path is taken on trust. Other hosts have no marker, so this is information, not an error.
+
+The switch does not judge TCP peers. A loopback TCP peer is local and any other TCP peer is remote, with or without the switch. The switch matters for an unseen peer under Bun: such a process hands its TCP requests to the app as unseen. So on a process that also listens on TCP, with the switch on and a socket path or the marker set, a TCP request that carries no forwarding header counts as local and skips the closed-window `404`. It still needs a `crews:manage` key. Do not set `CREW_API_TRUST_SOCKET=true` on a process that also listens on TCP. If the switch is on, a socket path or the marker is set, and `PORT`, `NITRO_PORT`, `HOST` or `NITRO_HOST` is also set (non-blank), the process logs one warning line. The warning reads only the environment; it cannot see a TCP listener.
+
+The automated tests cover the peer rules with faked requests, not a live Bun server behind nginx, so run these checks once after installing.
+
 ## Development
 
 Requirements, either path:

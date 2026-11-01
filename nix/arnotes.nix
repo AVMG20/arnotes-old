@@ -69,6 +69,7 @@ stdenv.mkDerivation (finalAttrs: {
     bun scripts/copy-crew-kit.ts crew "$out/lib/arnotes/crew"
 
     mkdir -p "$out/bin"
+    # This wrapper listens on TCP (HOST and PORT below). CREW_API_TRUST_SOCKET=true must not be enabled with this package.
     makeWrapper "${bun}/bin/bun" "$out/bin/arnotes" \
       --set-default NODE_ENV production \
       --set-default HOST 0.0.0.0 \
