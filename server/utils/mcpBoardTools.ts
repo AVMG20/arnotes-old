@@ -1209,6 +1209,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
     },
     async handler(args, context) {
       const { task, board } = await findTask(requireString(args, 'id'), context, { staff: 'moving tasks' })
+      // A subtask moves with its parent, as the app's route has it; finishing one is update_task completed.
+      if (task.parentTaskId) {
+        throw new McpToolError('A subtask moves with its parent. To finish it, use update_task with completed: true.')
+      }
       const columnRef = optionalString(args, 'column')
       const from = await findColumn(board, task.columnId)
       const column = columnRef ? await findColumn(board, columnRef) : from
