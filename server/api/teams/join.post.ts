@@ -2,6 +2,7 @@ import { db } from '../../db'
 import { organization, member } from '../../db/schema'
 import { eq, and } from 'drizzle-orm'
 import { normalizeJoinCode } from '../../utils/auth-helpers'
+import { crewTeamOf, isCrewUser } from '../../utils/crewAccounts'
 
 export default defineEventHandler(async (event) => {
   const session = event.context.session
@@ -25,6 +26,11 @@ export default defineEventHandler(async (event) => {
 
   if (!org) {
     throw createError({ statusCode: 404, message: 'Invalid team code. Team not found.' })
+  }
+
+  // A crew account is in its own crew's team and in no other.
+  if (await isCrewUser(userId) && (await crewTeamOf(userId)) !== org.id) {
+    throw createError({ statusCode: 403, message: 'Crew accounts can only be in their own crew team.' })
   }
 
   // Check if already a member

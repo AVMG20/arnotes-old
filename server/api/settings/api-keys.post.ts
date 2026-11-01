@@ -3,6 +3,7 @@ import { apiKeys, API_KEY_SCOPES } from '../../db/schema'
 import type { ApiKeyScope } from '../../db/schema'
 import { generateApiKey, isApiKeyScope } from '../../utils/api-keys'
 import { getUserActiveTeamId } from '../../utils/auth-helpers'
+import { requireInstanceAdmin } from '../../utils/instanceAdmin'
 
 const MAX_NAME_LENGTH = 60
 const MAX_EXPIRY_DAYS = 3650
@@ -31,6 +32,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const scopes = [...new Set(body.scopes ?? [])].filter(isApiKeyScope)
+  // A crew key creates and rotates whole crews; only the instance admin may hold one.
+  if (scopes.includes('crews:manage')) await requireInstanceAdmin(event)
   if (!scopes.length) {
     throw createError({ statusCode: 400, message: `Pick at least one permission (${API_KEY_SCOPES.join(', ')})` })
   }

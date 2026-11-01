@@ -6,7 +6,7 @@ import { domainToASCII } from 'node:url'
 import { eq } from 'drizzle-orm'
 import { hashPassword } from 'better-auth/crypto'
 import { db } from '../db'
-import { account, user } from '../db/schema'
+import { account, crews, user } from '../db/schema'
 import { genId } from './projects'
 
 // RFC 2606 reserved: never deliverable, so a crew account never gets mail.
@@ -118,4 +118,90 @@ export async function createCrewAccount(input: {
     throw error
   }
   return { id, created: true }
+}
+
+/** The address of a crew's account for one person: <slug>-<key>@crew.invalid. */
+export function crewAddress(slug: string, key: string): string {
+  return `${slug}-${key}@${CREW_DOMAIN}`
+}
+
+/** The person key an account answers to, read back from its address. */
+export function personKeyOf(slug: string, email: string): string {
+  const normal = normalizeAddress(email)
+  return normal.slice(0, normal.lastIndexOf('@')).slice(slug.length + 1)
+}
+
+/**
+ * Whether a crew account may sign in or use the API: live while its crew exists and is
+ * not disabled. Deleting a team takes the crew row with it, so an orphaned crew account
+ * (no crew) is refused too. Non-crew accounts are always live.
+ */
+export async function crewAccountLive(userId: string): Promise<boolean> {
+  const [row] = await db.select({ email: user.email, crewId: user.crewId }).from(user).where(eq(user.id, userId))
+  if (!row || !isCrewAddress(row.email)) return true
+  if (!row.crewId) return false
+  const [crew] = await db.select({ disabledAt: crews.disabledAt }).from(crews).where(eq(crews.id, row.crewId))
+  return Boolean(crew) && !crew!.disabledAt
+}
+
+/** Whether an account is a crew's. Crew accounts may not join or start teams or accept invitations. */
+export async function isCrewUser(userId: string): Promise<boolean> {
+  const [row] = await db.select({ email: user.email, crewId: user.crewId }).from(user).where(eq(user.id, userId))
+  // An account whose crew is gone has no crewId but keeps its crew address: still a crew's.
+  return Boolean(row?.crewId) || (row !== undefined && isCrewAddress(row.email))
+}
+
+/** The team a crew account belongs to, or null for an account that is not a crew's. */
+export async function crewTeamOf(userId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ teamId: crews.teamId })
+    .from(user)
+    .innerJoin(crews, eq(crews.id, user.crewId))
+    .where(eq(user.id, userId))
+  return row?.teamId ?? null
+}
+
+/** The bare address of a recipient: the text inside <...> when there is one, else the text itself. */
+export function bareAddress(recipient: string): string {
+  const angled = /<([^<>]+)>/.exec(recipient)
+  return (angled ? angled[1]! : recipient).trim()
+}
+
+// Only these characters may stand in the local part of an address that is sent. Quotes,
+// brackets, spaces, backslashes and the @ are refused, whatever a parser made of them.
+const LOCAL_PART = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/
+// One hostname label: letters, digits and inner hyphens, 1 to 63 characters.
+const HOST_LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
+
+/**
+ * The address as it is sent, or null when it is not a plain address that converts to a real
+ * hostname. Fail closed: anything not on the whitelist is null. The domain is folded (NFKC,
+ * the ideographic and fullwidth full stops as dots, lower case, all trailing dots gone) and
+ * converted to ASCII; every label must then be a hostname label, at most 253 characters in all.
+ */
+export function asciiAddress(address: string): string | null {
+  const folded = address.normalize('NFKC').trim()
+  const at = folded.lastIndexOf('@')
+  if (at <= 0) return null
+  const local = folded.slice(0, at)
+  // RFC 5321: the local part is at most 64 octets (it is ASCII once it passes LOCAL_PART).
+  if (!LOCAL_PART.test(local) || local.length > 64) return null
+  const domain = folded.slice(at + 1)
+    .replace(/[\u3002\uFF0E\uFF61]/g, '.')
+    .toLowerCase()
+    .replace(/\.+$/, '')
+  const ascii = domainToASCII(domain)
+  if (!ascii || ascii.length > 253) return null
+  if (ascii.split('.').some(label => !HOST_LABEL.test(label))) return null
+  return `${local}@${ascii}`
+}
+
+/**
+ * Whether a recipient is in the reserved .invalid space, or is not a plain address at all
+ * (which is refused too: fail closed). Its last label is `invalid`.
+ */
+export function isReservedInvalidAddress(recipient: string): boolean {
+  const ascii = asciiAddress(bareAddress(recipient))
+  if (ascii === null) return true
+  return ascii.endsWith('.invalid') || ascii.endsWith('@invalid')
 }

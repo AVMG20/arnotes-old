@@ -1,5 +1,5 @@
 import { betterAuth } from 'better-auth'
-import { APIError, createAuthMiddleware } from 'better-auth/api'
+import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { emailOTP } from 'better-auth/plugins/email-otp'
 import { genericOAuth } from 'better-auth/plugins/generic-oauth'
@@ -11,7 +11,7 @@ import * as schema from '../db/schema'
 import { mailEnabled, sendMail } from './mailer'
 import { eq } from 'drizzle-orm'
 import { ensureOwnerOrganization, invitationTokenFrom, isFirstUser, isLiveInvitation } from '../utils/ownerOrganization'
-import { isInvalidDomain } from '../utils/crewAccounts'
+import { crewAccountLive, isCrewUser, isInvalidDomain } from '../utils/crewAccounts'
 
 const baseURL = process.env.BETTER_AUTH_URL || 'http://localhost:3000'
 
@@ -122,6 +122,14 @@ export const auth = betterAuth({
     // An email code proves only access to the inbox. For an account that turned on
     // two-factor, letting it in on that alone would make the second factor optional.
     before: createAuthMiddleware(async (ctx) => {
+      // A crew account may not join a team or start one through the library's own routes.
+      if (ctx.path === '/organization/accept-invitation' || ctx.path === '/organization/create') {
+        const session = await getSessionFromCtx(ctx)
+        if (session && await isCrewUser(session.user.id)) {
+          throw new APIError('FORBIDDEN', { message: 'Crew accounts cannot join or start a team.' })
+        }
+        return
+      }
       if (ctx.path !== '/sign-in/email-otp') return
       const email = typeof ctx.body?.email === 'string' ? ctx.body.email.toLowerCase() : ''
       const found = email ? await ctx.context.internalAdapter.findUserByEmail(email) : null
@@ -140,6 +148,17 @@ export const auth = betterAuth({
     }
   },
   databaseHooks: {
+    session: {
+      create: {
+        // A crew account signs in only while its crew is live (a disabled or deleted crew
+        // refuses it). Every other account is unaffected.
+        async before(session) {
+          if (!(await crewAccountLive(session.userId))) {
+            throw new APIError('FORBIDDEN', { message: 'This account is switched off.' })
+          }
+        }
+      }
+    },
     user: {
       update: {
         // A change of address meets the same rule as a sign-up, so a future change-email

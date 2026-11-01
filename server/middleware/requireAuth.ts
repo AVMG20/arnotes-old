@@ -1,4 +1,5 @@
 import { auth } from '../lib/auth'
+import { crewAccountLive, isCrewAddress } from '../utils/crewAccounts'
 
 // Everything under these needs a session. `/api/invitations` is deliberately not
 // here: an invite link has to be readable before its recipient has an account.
@@ -33,5 +34,10 @@ export default defineEventHandler(async (event) => {
   const session = await auth.api.getSession({ headers: event.headers })
   if (!session) throw createError({ statusCode: 401, message: 'Unauthorized' })
 
+  // A crew account is refused once its crew is disabled or gone, even on a session that
+  // was open before that happened.
+  if (isCrewAddress(session.user.email) && !(await crewAccountLive(session.user.id))) {
+    throw createError({ statusCode: 401, message: 'Unauthorized' })
+  }
   event.context.session = session
 })
