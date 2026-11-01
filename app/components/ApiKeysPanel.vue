@@ -129,6 +129,8 @@ async function revokeKey(key: ApiKeySummary) {
 
 // Badges read "boards: write", short enough to sit beside a key name.
 function scopeLabel(scope: string): string {
+  // Shown on a key only the instance admin can hold; the picker never offers it.
+  if (scope === 'crews:manage') return 'crew api'
   const [feature, permission] = scope.split(':')
   return `${feature} ${permission}`
 }

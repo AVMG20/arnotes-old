@@ -670,7 +670,7 @@ export const POPULAR_OPENROUTER_MODELS = [
 
 // Permissions a key can carry, one pair per feature. Read covers listing,
 // searching and reading; write covers everything that changes data.
-export const API_KEY_SCOPES = ['boards:read', 'boards:write', 'secrets:read', 'secrets:write'] as const
+export const API_KEY_SCOPES = ['boards:read', 'boards:write', 'secrets:read', 'secrets:write', 'crews:manage'] as const
 export type ApiKeyScope = typeof API_KEY_SCOPES[number]
 
 export const apiKeys = pgTable(
@@ -948,7 +948,41 @@ export const crews = pgTable(
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     // NULL while the crew is live; set when it is disabled.
     disabledAt: bigint('disabled_at', { mode: 'number' })
-  }
+  },
+  table => [index('crews_team_id_idx').on(table.teamId)]
 )
 
 export type Crew = typeof crews.$inferSelect
+
+// The crew API window (BRIEF-crew-feature 2b): one row, id "gate". While openUntil is
+// in the future a remote caller may use the temporary crews:manage key tempKeyId.
+// Stored here, not in memory, so a restart neither leaves it open nor loses the reason
+// it was closed.
+export const crewApiGate = pgTable(
+  'crew_api_gate',
+  {
+    id: text('id').primaryKey(),
+    openUntil: bigint('open_until', { mode: 'number' }),
+    openedBy: text('opened_by').references(() => user.id, { onDelete: 'set null' }),
+    tempKeyId: text('temp_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+    closedReason: text('closed_reason'),
+    closedFrom: text('closed_from'),
+    closedAt: bigint('closed_at', { mode: 'number' })
+  }
+)
+
+// Every refused call on /api/crews: when, from where (the peer, never a header), what
+// was asked and why it was refused. Never the key text.
+export const crewApiAudit = pgTable(
+  'crew_api_audit',
+  {
+    id: text('id').primaryKey(),
+    at: bigint('at', { mode: 'number' }).notNull(),
+    peer: text('peer').notNull(),
+    method: text('method').notNull(),
+    path: text('path').notNull(),
+    outcome: text('outcome').notNull(),
+    keyPresented: boolean('key_presented').notNull().default(false)
+  },
+  table => [index('crew_api_audit_at_idx').on(table.at)]
+)

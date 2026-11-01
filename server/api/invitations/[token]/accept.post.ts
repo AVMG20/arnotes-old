@@ -3,6 +3,7 @@ import { customerInvitations, customerMembers } from '../../../db/schema'
 import { and, eq, gt, isNull } from 'drizzle-orm'
 import { auth } from '../../../lib/auth'
 import { genId } from '../../../utils/projects'
+import { isCrewUser } from '../../../utils/crewAccounts'
 import { hashInvitationToken, INVITATION_COOKIE } from '../../../utils/customers'
 
 // Turns the signed-in account into a contact of the invitation's customer. The
@@ -10,6 +11,12 @@ import { hashInvitationToken, INVITATION_COOKIE } from '../../../utils/customers
 export default defineEventHandler(async (event) => {
   const session = await auth.api.getSession({ headers: event.headers })
   if (!session) throw createError({ statusCode: 401, message: 'Sign in to accept this invitation' })
+
+  // Crew accounts are contacts only where their crew provisioned them; no invitation
+  // is ever theirs to spend, so the link stays unspent for someone else.
+  if (await isCrewUser(session.user.id)) {
+    throw createError({ statusCode: 403, message: 'Crew accounts cannot accept invitations.' })
+  }
 
   const token = getRouterParam(event, 'token') ?? ''
   const now = Date.now()
