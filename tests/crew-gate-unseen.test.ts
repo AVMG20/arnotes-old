@@ -52,8 +52,8 @@ test('outside Bun with no socket the peer stays unknown', () => {
   assert.deepEqual(peerOf({} as H3Event, false), { kind: 'unknown' })
 })
 
-test('a node socket with a port but no address is still unknown, even when Bun is detected', () => {
-  assert.deepEqual(peerOf(nodeEvent({ remotePort: 4000 }), true), { kind: 'unknown' })
+test('under Bun a socket with a port but no address is unseen: the stub says nothing about the caller', () => {
+  assert.deepEqual(peerOf(nodeEvent({ remotePort: 4000 }), true), { kind: 'unseen' })
 })
 
 test('node TCP peers keep their address and their rule whatever the socket settings', () => {
@@ -240,4 +240,45 @@ test('marker alone, with PORT and no socket path: unseen is local, and the warni
   const warnings = socketTrustStartupLines(env).filter(line => line.level === 'warning')
   assert.equal(warnings.length, 1)
   assert.match(warnings[0]?.text ?? '', /\(PORT\)/)
+})
+
+// ── The Bun request stub: an empty address and a numeric port (issue #13) ─
+
+const bunStub = { remoteAddress: '', remotePort: 0 }
+
+test('under Bun a stub socket with an empty address and port 0 is unseen, and is local only with the full trust conditions', () => {
+  assert.deepEqual(peerOf(nodeEvent(bunStub), true), { kind: 'unseen' })
+  assert.equal(localFor(peerOf(nodeEvent(bunStub), true), headers(), { CREW_API_TRUST_SOCKET: 'true', SOCKET: '/run/app.sock' }), true)
+  assert.equal(localFor(peerOf(nodeEvent(bunStub), true), headers(), { CREW_API_TRUST_SOCKET: 'true', NITRO_UNIX_SOCKET: '/run/app.sock' }), true)
+  assert.equal(localFor(peerOf(nodeEvent(bunStub), true), headers(), { CREW_API_TRUST_SOCKET: 'true', BLAZE_UNIX_LISTENER: '1' }), true)
+})
+
+test('the same Bun stub without a socket path or marker, or without the switch, stays remote', () => {
+  const peer = peerOf(nodeEvent(bunStub), true)
+  assert.equal(localFor(peer, headers(), { CREW_API_TRUST_SOCKET: 'true' }), false)
+  assert.equal(localFor(peer, headers(), { SOCKET: '/run/app.sock' }), false)
+  assert.equal(localFor(peer, headers(), {}), false)
+})
+
+test('the Bun stub with any forwarding header stays remote, even with the full trust conditions', () => {
+  const peer = peerOf(nodeEvent(bunStub), true)
+  const env = { CREW_API_TRUST_SOCKET: 'true', SOCKET: '/run/app.sock' }
+  for (const [name, value] of FORWARDING) {
+    assert.equal(localFor(peer, headers({ [name]: value }), env), false, `${name}: ${value}`)
+  }
+})
+
+test('the same stub outside Bun stays unknown and remote, whatever the switch says', () => {
+  assert.deepEqual(peerOf(nodeEvent(bunStub), false), { kind: 'unknown' })
+  assert.equal(localFor({ kind: 'unknown' }, headers(), { CREW_API_TRUST_SOCKET: 'true', SOCKET: '/run/app.sock' }), false)
+})
+
+test('a socket with no address and no port: unix under Node (unchanged), unseen under Bun', () => {
+  assert.deepEqual(peerOf(nodeEvent({}), false), { kind: 'unix' })
+  assert.deepEqual(peerOf(nodeEvent({}), true), { kind: 'unseen' })
+})
+
+test('under Bun a real TCP address is still tcp, whatever the port', () => {
+  assert.deepEqual(peerOf(nodeEvent({ remoteAddress: '127.0.0.1', remotePort: 0 }), true), { kind: 'tcp', address: '127.0.0.1' })
+  assert.equal(localFor({ kind: 'tcp', address: '203.0.113.7' }, headers(), { CREW_API_TRUST_SOCKET: 'true', SOCKET: '/run/app.sock' }), false)
 })
