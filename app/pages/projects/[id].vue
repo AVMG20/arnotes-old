@@ -168,7 +168,7 @@ const projectMenu = computed(() => {
     : []
 
   return [
-    [{ label: 'Rename project', icon: 'i-lucide-pencil', onSelect: startRename }],
+    [{ label: 'Rename project', icon: 'i-lucide-pencil', onSelect: startRename }, { label: 'Settings', icon: 'i-lucide-settings', onSelect: () => setView('settings') }],
     ...trash
   ]
 })
@@ -374,6 +374,7 @@ useSeoMeta({
           :color="view === 'settings' ? 'primary' : 'neutral'"
           :variant="view === 'settings' ? 'soft' : 'ghost'"
           aria-label="Project settings"
+          class="max-sm:hidden"
           data-project-settings
           @click="setView('settings')"
         >
