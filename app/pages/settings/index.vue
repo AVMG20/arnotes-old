@@ -6,7 +6,7 @@ definePageMeta({ layout: 'app' })
 
 useSeoMeta({ title: 'Settings' })
 
-const { session, signOut } = useAuth()
+const { session, signOut, isInstanceAdmin } = useAuth()
 const colorMode = useColorMode()
 const { primaryColor, neutralColor, PRIMARY_COLORS, NEUTRAL_COLORS, setPrimaryColor, setNeutralColor, openrouterApiKeyMasked, openrouterModel, POPULAR_OPENROUTER_MODELS, setOpenRouterApiKey, setOpenRouterModel } = useUserSettings()
 const { sidebarOpen } = useSidebar()
@@ -165,6 +165,15 @@ function swatchStyle(color: string, selected: boolean) {
         <h1 class="font-semibold text-sm">
           Settings
         </h1>
+        <UButton
+          v-if="isInstanceAdmin"
+          to="/admin/crews"
+          label="Crews"
+          icon="i-lucide-boxes"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+        />
         <UButton
           to="/settings/ai-history"
           label="AI history"
