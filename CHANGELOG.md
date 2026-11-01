@@ -4,6 +4,8 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- Crews: an agent team is made in one call. `POST /api/crews`, with a `crews:manage` key (a scope only the instance admin can hold), makes the crew's team, customer, board and accounts, and returns the passwords and keys once. `GET /api/crews/:slug` shows a crew without secrets; `DELETE /api/crews/:slug` disables it, and `?purge=1` deletes it. Crew accounts use reserved `@crew.invalid` addresses: they never receive mail, cannot join other teams or accept invitations, and cannot sign in once their crew is disabled or gone. The crew API answers local callers only; a remote caller needs the instance admin's 10-minute window (opened on the Crews page), which closes at the first refused key while it is open. Instance admins have a Crews page (`/admin/crews`) to list crews, disable, re-enable or purge them, and open the window. The crew kit is served at `/crew/kit.tar.gz` and `/crew/SKILL.md`.
+
 - On a phone, Settings is an entry in the Project options menu (the gear without a word is gone), and a long project name wraps at word boundaries or, without spaces, ends in an ellipsis; the buttons stay on screen at every width. The task's visibility button explains what sharing with the customer does, including that the task shows on the board's public link when the board is shared
 
 - A board that will not open in the current workspace says which team it belongs to when you are in that team, with a button that switches to it and opens the board. Project Settings moved from the last tab to a button in the header (at 1280 px the tab was cut off), and the settings sections wrap on a phone instead of scrolling sideways
