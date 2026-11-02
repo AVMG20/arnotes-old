@@ -6,6 +6,7 @@
 //   crew watch                 the Boss's board watcher (watch.mjs)
 //   crew init                  check the machine and render the documents (init.mjs)
 //   crew setup                 make the crew by hand through the crew API (setup.mjs)
+//   crew channel <who>         the Claude Code channel server for one person (channel.mjs)
 //
 // The other file names (tm.mjs, listen.mjs, ...) keep working.
 import { spawnSync } from 'node:child_process'
@@ -14,10 +15,10 @@ import { fileURLToPath } from 'node:url'
 
 const kit = dirname(fileURLToPath(import.meta.url))
 const [first, ...rest] = process.argv.slice(2)
-const scripts = { listen: 'listen.mjs', watch: 'watch.mjs', init: 'init.mjs', setup: 'setup.mjs' }
+const scripts = { listen: 'listen.mjs', watch: 'watch.mjs', init: 'init.mjs', setup: 'setup.mjs', channel: 'channel.mjs' }
 
 if (!first || first === '-h' || first === '--help') {
-  console.log('usage: crew <who> <command ...> | crew listen <who> [sec] | crew watch | crew init | crew setup')
+  console.log('usage: crew <who> <command ...> | crew listen <who> [sec] | crew watch | crew init | crew setup | crew channel <who>')
   process.exit(first ? 0 : 2)
 }
 
