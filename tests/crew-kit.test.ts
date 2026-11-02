@@ -258,3 +258,15 @@ test('no kit document names a kit script under {{crew_dir}}', () => {
   }
   assert.deepEqual(offenders, [], 'a script is named under {{crew_dir}}; use {{kit_dir}}')
 })
+
+// A template runs a kit script with a folder, never bare: "node tm.mjs", "bash x.sh" or "./x.mjs"
+// only works from inside the kit folder, which the agents do not run from.
+test('no kit template runs a kit script without a folder', () => {
+  const offenders: string[] = []
+  for (const name of readdirSync(KIT_DIR)) {
+    if (!name.endsWith('.tmpl')) continue
+    const text = readFileSync(join(KIT_DIR, name), 'utf8')
+    for (const match of text.matchAll(/(?:\bnode|\bbash)\s+[\w.-]+\.(?:mjs|sh)\b|(?<![\w/{}.-])\.\/[\w.-]+\.(?:mjs|sh)\b/g)) offenders.push(`${name}: ${match[0]}`)
+  }
+  assert.deepEqual(offenders, [], 'a script is run without a folder; use {{kit_dir}}/<script>')
+})

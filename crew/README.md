@@ -12,7 +12,7 @@ Taskmanager serves the kit itself, so it always matches the instance it talks to
 
 ## A provisioned crew (the way to run it)
 
-The instance admin makes the crew through the crew API, with a `crews:manage` key. The
+The commands in this section run from the kit folder (this one, where this README is). The instance admin makes the crew through the crew API, with a `crews:manage` key. The
 response is the crew's `creds.json`; nothing else is set up by hand.
 
 1. Write `crew.json` in the crew's home folder (see `crew.config.example.json`): the product, the
@@ -39,7 +39,7 @@ Environment:
 ## Making the crew by hand
 
 `setup.mjs` is a thin client of the same crew API, for a person who runs the kit without the
-Taskmanager instance's own automation:
+Taskmanager instance's own automation (run from the kit folder):
 
     CREW_ADMIN_KEY=<key> node setup.mjs              # needs "crew": { "slug": "..." } in crew.json
     CREW_ADMIN_KEY=<key> node setup.mjs --rotate    # the crew exists, creds.json is lost
@@ -67,5 +67,5 @@ The old file names (`tm.mjs`, `listen.mjs`, ...) still work.
 ## Updating
 
 Get the new kit (`/crew/kit.tar.gz`) and unpack it over this folder. Your state is in `CREW_HOME`,
-and the kit's changes are in `CHANGELOG.md`. Run `node init.mjs` again to render the documents
+and the kit's changes are in `CHANGELOG.md`. Run `node init.mjs` again (from the kit folder) to render the documents
 from the new templates. The kit's `x-crew-kit-version` response header names the build.
