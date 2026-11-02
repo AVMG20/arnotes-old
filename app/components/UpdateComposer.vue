@@ -5,7 +5,8 @@ import { Extension } from '@tiptap/core'
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model'
 import StarterKit from '@tiptap/starter-kit'
 import Highlight from '@tiptap/extension-highlight'
-import { escapeInlineMarkdown, renderInlineMarkdown } from '#shared/utils/inlineMarkdown'
+import { escapeMarkdown } from '#shared/utils/inlineMarkdown'
+import { renderCommentMarkdown } from '~/utils/markdown'
 
 // The update box: one line of text that happens to be a real editor. There is
 // no toolbar and no chrome — typing `**done**` turns bold as you type it, and
@@ -49,7 +50,7 @@ function inlineToMarkdown(block: ProseMirrorNode): string {
     // Code is literal: its content is never escaped and never re-marked.
     let text = marks.has('code')
       ? `\`${child.text ?? ''}\``
-      : escapeInlineMarkdown(child.text ?? '')
+      : escapeMarkdown(child.text ?? '')
 
     if (!marks.has('code')) {
       for (const name of ['highlight', 'strike', 'italic', 'bold']) {
@@ -82,7 +83,7 @@ const submitOnEnter = Extension.create({
 })
 
 const editor = useEditor({
-  content: props.modelValue ? renderInlineMarkdown(props.modelValue) : '',
+  content: props.modelValue ? renderCommentMarkdown(props.modelValue) : '',
   extensions: [
     StarterKit.configure({
       // Everything that would open a block is off: an update is a line.
@@ -127,7 +128,7 @@ watch(() => props.modelValue, (value) => {
   if (!instance) return
   const current = instance.state.doc.content.content.map(inlineToMarkdown).join('\n').trim()
   if (value === current) return
-  instance.commands.setContent(value ? renderInlineMarkdown(value) : '', { emitUpdate: false })
+  instance.commands.setContent(value ? renderCommentMarkdown(value) : '', { emitUpdate: false })
 })
 
 function focus() {

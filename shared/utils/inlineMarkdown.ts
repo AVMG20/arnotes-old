@@ -1,147 +1,85 @@
-// The narrow Markdown task updates are written in.
+// What the update composer writes for the text a person typed.
 //
-// An update is a line in a running log, not a document: it can emphasise a
-// word, quote an identifier or link out, and that is the whole of it. So the
-// grammar here stops at the marks that fit inside a sentence — bold, italic,
-// inline code, strike, highlight and links — and never opens a block. Anything
-// that would start a heading, a list or an image is left as the text the author
-// typed. The task's description is where prose of that size belongs.
-//
-// Updates are stored as this Markdown, exactly as written, so an agent posting
-// over MCP and a person typing in the drawer speak the same language and the
-// stored row stays readable on its own. Rendering happens here, once, for both.
+// An update is stored as Markdown and drawn by the renderer task comments use
+// (shared/utils/commentMarkdown.ts). That renderer draws raw HTML, `&`, and a lone
+// `<`, `>`, `*`, `_`, `=` or `~` literally, so those are escaped only when the line
+// holds a partner that would make them markup:
+//   * `*`, `` ` ``, `~`, `=`: when the same character occurs later in the text.
+//   * `_`: unless it sits between two letters or digits (snake_case stays).
+//   * `[` and `]`: all of them, when a `[` comes before a `]` (a bracket pair).
+//   * `<`: when a `>` comes after it (an autolink).
+//   * `\`: when it would eat the next character (punctuation, or the line end).
+// Lone characters are written as typed, so `a = b`, `cost ~5` and `[note` show no
+// backslashes. The partner check runs over the whole text, because emphasis and
+// code spans can run across a line break.
+// Block starts at the start of a line are always escaped: # > + - | : = * and a
+// number followed by `.` or `)`. Leading and trailing spaces and tabs become
+// no-break spaces: marked would otherwise read four spaces as a code block, drop
+// the indentation of a continued line, or make a hard break. Once drawn, a no-break
+// space is read as a space, so nothing is lost.
 
-const ESCAPABLE = '\\`*_~=[]'
+const WORD = /[\p{L}\p{N}]/u
+// ASCII punctuation, which a backslash escapes.
+const PUNCTUATION = /[!-/:-@[-`{-~]/
+const BLOCK_START = new Set(['#', '>', '+', '-', '|', ':', '=', '*'])
+const ORDERED_START = /^\d+[.)]/
+const NBSP = '\xa0' // no-break space, written as an escape so it is visible in source
 
-/** Escapes the characters that would otherwise read as a mark. */
-export function escapeInlineMarkdown(text: string): string {
-  return text.replace(/[\\`*_~=[\]]/g, ch => `\\${ch}`)
+function isSpace(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t'
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+/** Escapes text the person typed, so it is drawn exactly as typed. */
+export function escapeMarkdown(text: string): string {
+  const escape = new Array<boolean>(text.length).fill(false)
 
-// Only schemes a reader can safely be sent to. Anything else stays plain text,
-// which matters because update bodies can come from an agent over MCP.
-const SAFE_URL = /^(?:https?:\/\/|mailto:)/i
-const BARE_URL = /^https?:\/\/[^\s<]*[^\s<.,:;"')\]]/i
-const LINK = /^\[([^\]\n]*)\]\(([^()\s]+)\)/
-
-const DELIMITERS: [marker: string, tag: string][] = [
-  ['**', 'strong'],
-  ['~~', 's'],
-  ['==', 'mark'],
-  ['*', 'em'],
-  ['_', 'em']
-]
-
-const LINK_ATTRS = 'target="_blank" rel="noopener noreferrer nofollow"'
-
-// The closing half of a delimiter, skipping over escaped characters so that
-// `\*` inside an emphasis does not end it early.
-function closingIndex(text: string, from: number, marker: string): number {
-  for (let i = from; i < text.length; i++) {
-    if (text[i] === '\\') {
-      i++
-      continue
+  // Partners across the whole text: a markup character needs a later twin.
+  for (const ch of ['*', '`', '~', '=']) {
+    const last = text.lastIndexOf(ch)
+    for (let i = 0; i < last; i++) {
+      if (text[i] === ch) escape[i] = true
     }
-    if (text.startsWith(marker, i)) return i
   }
-  return -1
-}
-
-/**
- * Inline Markdown → HTML. The output is built tag by tag from escaped text, so
- * it carries nothing the author did not write and is safe to render directly.
- */
-export function renderInlineMarkdown(text: string): string {
-  if (!text) return ''
-
-  let out = ''
-  let i = 0
-
-  while (i < text.length) {
-    const ch = text[i]!
-
-    if (ch === '\\' && i + 1 < text.length && ESCAPABLE.includes(text[i + 1]!)) {
-      out += escapeHtml(text[i + 1]!)
-      i += 2
-      continue
+  const firstOpen = text.indexOf('[')
+  if (firstOpen !== -1 && text.lastIndexOf(']') > firstOpen) {
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '[' || text[i] === ']') escape[i] = true
     }
-
-    if (ch === '\n') {
-      out += '<br>'
-      i++
-      continue
-    }
-
-    // Code first: what is inside a span of code is text, not markup.
-    if (ch === '`') {
-      const end = text.indexOf('`', i + 1)
-      if (end > i + 1) {
-        out += `<code>${escapeHtml(text.slice(i + 1, end))}</code>`
-        i = end + 1
-        continue
-      }
-    }
-
-    if (ch === '[') {
-      const link = LINK.exec(text.slice(i))
-      if (link && SAFE_URL.test(link[2]!)) {
-        out += `<a href="${escapeHtml(link[2]!)}" ${LINK_ATTRS}>${renderInlineMarkdown(link[1] ?? '')}</a>`
-        i += link[0].length
-        continue
-      }
-    }
-
-    // A URL pasted on its own, which is how most links arrive.
-    if ((ch === 'h' || ch === 'H') && (i === 0 || /[\s([]/.test(text[i - 1]!))) {
-      const bare = BARE_URL.exec(text.slice(i))
-      if (bare) {
-        out += `<a href="${escapeHtml(bare[0])}" ${LINK_ATTRS}>${escapeHtml(bare[0])}</a>`
-        i += bare[0].length
-        continue
-      }
-    }
-
-    const delimiter = DELIMITERS.find(([marker]) => text.startsWith(marker, i))
-    if (delimiter) {
-      const [marker, tag] = delimiter
-      const from = i + marker.length
-      // `snake_case` is a word, not emphasis, so an underscore only opens one
-      // at a word boundary. Emphasis also never opens or closes on a space.
-      const wordBoundary = marker !== '_' || i === 0 || !/[\w]/.test(text[i - 1]!)
-      if (wordBoundary && from < text.length && !/\s/.test(text[from]!)) {
-        const end = closingIndex(text, from, marker)
-        if (end > from && !/\s/.test(text[end - 1]!)) {
-          out += `<${tag}>${renderInlineMarkdown(text.slice(from, end))}</${tag}>`
-          i = end + marker.length
-          continue
-        }
-      }
-    }
-
-    out += escapeHtml(ch)
-    i++
+  }
+  // A `<` makes markup only as an autolink, `<scheme:...>`; other `<` stay as typed.
+  const autolink = /^<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>/
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '<' && autolink.test(text.slice(i))) escape[i] = true
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '_') escape[i] = !(WORD.test(text[i - 1] ?? '') && WORD.test(text[i + 1] ?? ''))
+    if (text[i] === '\\') escape[i] = i + 1 >= text.length || text[i + 1] === '\n' || PUNCTUATION.test(text[i + 1]!)
   }
 
-  return out
-}
+  let offset = 0
+  return text.split('\n').map((line) => {
+    const start = offset
+    offset += line.length + 1
+    const first = line.search(/[^ \t]/)
+    if (first !== -1) {
+      if (BLOCK_START.has(line[first]!)) escape[start + first] = true
+      const ordered = ORDERED_START.exec(line.slice(first))
+      if (ordered) escape[start + first + ordered[0].length - 1] = true
+    }
 
-/** The same text with its marks taken off, for counts, titles and previews. */
-export function inlineMarkdownToPlainText(text: string): string {
-  return renderInlineMarkdown(text)
-    .replace(/<br>/g, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
-    .trim()
+    // Edge whitespace: everything before the first and after the last non-space.
+    let lead = 0
+    while (lead < line.length && isSpace(line[lead])) lead++
+    let trail = line.length
+    while (trail > lead && isSpace(line[trail - 1])) trail--
+
+    let out = ''
+    for (let k = 0; k < line.length; k++) {
+      const ch = line[k]!
+      if (isSpace(ch) && (k < lead || k >= trail)) out += NBSP
+      else if (escape[start + k]) out += `\\${ch}`
+      else out += ch
+    }
+    return out
+  }).join('\n')
 }
