@@ -1,6 +1,6 @@
 import { createError, defineEventHandler, getHeader, getRequestWebStream, setResponseHeader, setResponseStatus } from 'h3'
 import { refreshForEvent } from '../../utils/githubSync'
-import { readCappedBody, repositoryOf, signatureMatches } from '../../utils/githubCards'
+import { readCappedBody, repositoryOf, signatureMatches, TAG_EVENTS } from '../../utils/githubCards'
 import { DeliveryTooLarge } from '../../utils/githubDeliveryQueueTypes'
 import { getDeliveryQueue } from '../../utils/githubDeliveryQueue'
 import { repoAcceptLimit } from '../../utils/githubDeliveryLimit'
@@ -9,8 +9,11 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024
 
 // The events that can change what a link shows. Others are accepted and ignored.
 const HANDLED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request', 'check_run', 'workflow_run'])
-// The events the card syncer takes. Each is queued, and counted against the repository's per-minute limit.
+// The events the card syncer takes. Counted against the repository's per-minute limit.
 const SYNCED_EVENTS = new Set(['issues', 'issue_comment'])
+// The events queued for the consumer: the synced ones, and the tag events (GH3: pipeline and merge tags). Only the
+// synced ones count against the per-minute limit, so a burst of check runs cannot push an issue out of the queue.
+const QUEUED_EVENTS = new Set([...SYNCED_EVENTS, 'pull_request', 'check_run', 'workflow_run'])
 
 // The delivery id GitHub sends in X-GitHub-Delivery (a UUID): plain characters, at most 100.
 const DELIVERY_ID = /^[A-Za-z0-9-]{1,100}$/
@@ -65,15 +68,16 @@ export default defineEventHandler(async (event) => {
 
   // The per-minute limit runs before anything else for a synced event. Over it, GitHub is told 429
   // with Retry-After, so the delivery shows as failed and can be redelivered.
-  const repository = SYNCED_EVENTS.has(name) ? repositoryOf(payload) : null
-  if (repository && !repoAcceptLimit.allow(`${repository.owner}/${repository.repo}`.toLowerCase(), deliveryId)) {
+  const repository = QUEUED_EVENTS.has(name) ? repositoryOf(payload) : null
+  if (repository && SYNCED_EVENTS.has(name) && !repoAcceptLimit.allow(`${repository.owner}/${repository.repo}`.toLowerCase(), deliveryId)) {
     setResponseHeader(event, 'Retry-After', 60)
     throw createError({ statusCode: 429, message: 'Too many deliveries for this repository; redeliver it in a minute' })
   }
 
   // GitHub wants a quick answer; the refresh of the affected links runs after it.
   // A failed refresh is kept in the cache's retry time, so nothing is lost by dropping it here.
-  refreshForEvent(name, (payload ?? {}) as Parameters<typeof refreshForEvent>[1]).catch((error: unknown) => {
+  // The tag events refresh their links inside the consumer, under the tag read budget (githubTags.ts): not here.
+  if (!(TAG_EVENTS as readonly string[]).includes(name)) refreshForEvent(name, (payload ?? {}) as Parameters<typeof refreshForEvent>[1]).catch((error: unknown) => {
     console.error(`GitHub delivery ${deliveryId || '(no id)'} (${name}): the link refresh failed (${error instanceof Error ? error.name : 'non-Error'})`)
   })
 
