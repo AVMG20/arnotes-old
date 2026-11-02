@@ -8,6 +8,7 @@ import { requireAssignable } from '../../../utils/people'
 import { parseDueOn } from '../../../utils/taskFields'
 import { logActivity } from '../../../utils/taskActivity'
 import { notifyAssigned } from '../../../utils/notifyEvents'
+import { announceTaskCreated } from '../../../utils/agentEvents'
 import { fireRules, newRuleChain } from '../../../utils/ruleEngine'
 
 export default defineEventHandler(async (event) => {
@@ -84,6 +85,7 @@ export default defineEventHandler(async (event) => {
   await db.update(projects).set({ updatedAt: now }).where(eq(projects.id, projectRow.id))
 
   await logActivity(task!, event.context.session.user.id, [{ kind: 'created' }])
+  if (task) announceTaskCreated(projectRow, task, event.context.session.user.id, 'person')
   if (task?.assigneeId) await notifyAssigned(projectRow, task, event.context.session.user.id, task.assigneeId)
   // The rules hear about the new task once it is saved, and a subtask counts too.
   if (task) await fireRules({ type: 'task_added', projectId: projectRow.id, taskId: task.id, actorId: event.context.session.user.id, actorIsAgent: false, detail: null }, newRuleChain()).catch(() => {})

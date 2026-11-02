@@ -19,6 +19,7 @@ import { MAX_PROJECT_DESCRIPTION, PROJECT_STATUSES, parseDueOn, parseProjectStat
 import { projectPeople } from './people'
 import { readTaskGithubLinks } from './githubTaskLinks'
 import { notifyAssigned, notifyTaskChange } from './notifyEvents'
+import { announceTaskCreated } from './agentEvents'
 import { fireRules, newRuleChain } from './ruleEngine'
 import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
@@ -1108,6 +1109,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       }).returning()
 
       await logActivity(task!, context.userId, [{ kind: 'created' }], 'mcp')
+      announceTaskCreated(board, task!, context.userId, 'agent')
       if (task!.assigneeId) await notifyAssigned(board, task!, context.userId, task!.assigneeId)
       const storedValues = fieldMap ? await asToolErrorAsync(() => setFieldValues(task!.id, fieldDefs, fieldMap)) : undefined
       await touchBoard(board.id)

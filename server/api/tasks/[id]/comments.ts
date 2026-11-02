@@ -63,7 +63,7 @@ export default defineEventHandler(async (event) => {
     createdAt: Date.now()
   }).returning()
 
-  await notifyComment(project, _task, event.context.session.user.id, body, comment!.visibility === 'internal')
+  await notifyComment(project, _task, event.context.session.user.id, body, comment!.visibility === 'internal', replyToId)
   // A comment is an event too: the rules hear about it once it is saved.
   await fireRules({ type: 'comment_added', projectId: project.id, taskId: id, actorId: event.context.session.user.id, actorIsAgent: false, detail: null }, newRuleChain()).catch(() => {})
   await publishFromEvent(event, { type: 'board', projectId: _task.projectId })

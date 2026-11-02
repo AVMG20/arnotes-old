@@ -2,9 +2,11 @@
 // drops whoever did it and whoever may not read it.
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
-import { projectMessages, taskComments, user } from '../db/schema'
+import { projectColumns, projectMessages, projectTasks, taskComments, user } from '../db/schema'
 import { notificationExcerpt, notify } from './notifications'
 import { projectPeople } from './people'
+import { agentEventHub, emitAgentEventAsync, emitInBackground, replyRecipients } from './agentEvents'
+import type { ReplyWriter } from './agentEvents'
 
 type Project = { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
 type Task = { id: string, title: string, visibility: 'internal' | 'customer', assigneeId?: string | null, createdBy?: string | null }
@@ -17,6 +19,7 @@ async function nameOf(userId: string | null): Promise<string> {
 
 /** A task was given to someone. */
 export async function notifyAssigned(project: Project, task: Task, actorId: string | null, assigneeId: string) {
+  emitInBackground(() => tellAssigned(project, task, actorId, assigneeId))
   await notify({
     project,
     task,
@@ -27,19 +30,71 @@ export async function notifyAssigned(project: Project, task: Task, actorId: stri
   })
 }
 
+// The agent event for an assignment: the assignee hears of it, unless they assigned it to themselves.
+async function tellAssigned(project: Project, task: Task, actorId: string | null, assigneeId: string) {
+  if (assigneeId === actorId) return
+  await emitAgentEventAsync(assigneeId, { kind: 'task_assigned', board: project, task, from: await nameOf(actorId), customerVisible: task.visibility === 'customer' })
+}
+
 /** An update was posted on a task: its assignee and the others who have written on it hear. */
-export async function notifyComment(project: Project, task: Task, actorId: string | null, body: string, internal: boolean) {
-  const writers = await db.select({ userId: taskComments.userId }).from(taskComments).where(eq(taskComments.taskId, task.id))
+export async function notifyComment(project: Project, task: Task, actorId: string | null, body: string, internal: boolean, replyToId: string | null = null) {
+  const writers = await db.select({ id: taskComments.id, userId: taskComments.userId, body: taskComments.body }).from(taskComments).where(eq(taskComments.taskId, task.id))
+  const recipients = [...new Set([...(task.assigneeId ? [task.assigneeId] : []), ...(task.createdBy ? [task.createdBy] : []), ...writers.map(writer => writer.userId)])]
   await notify({
     project,
     task,
     actorId,
     type: 'comment',
-    recipients: [...new Set([...(task.assigneeId ? [task.assigneeId] : []), ...(task.createdBy ? [task.createdBy] : []), ...writers.map(writer => writer.userId)])],
+    recipients,
     staffOnly: internal,
     title: `${await nameOf(actorId)} commented on "${task.title}"`,
     body: notificationExcerpt(body)
   })
+  // Agents hear of a mention, and of a reply: to the people on the card, to those who commented on it, and to the author replied to.
+  emitInBackground(() => tellAgentsOfComment(project, task, actorId, body, { internal, replyToId, owners: [task.assigneeId, task.createdBy], writers }))
+}
+
+/**
+ * The agent events for a comment: a mention, and a reply to the owners of the card, the
+ * people who asked on it and the author of the comment replied to. Someone mentioned
+ * gets the mention only. A customer hears only what is customer-visible on a
+ * customer-visible card.
+ */
+async function tellAgentsOfComment(
+  project: Project,
+  task: Task,
+  actorId: string | null,
+  body: string,
+  comment: { internal: boolean, replyToId: string | null, owners: (string | null | undefined)[], writers: ReplyWriter[] }
+) {
+  const customerVisible = !comment.internal && task.visibility === 'customer'
+  const from = await nameOf(actorId)
+  const mentioned = body.includes('@') ? await mentionedIn(project, body, actorId) : new Set<string>()
+  for (const id of mentioned) {
+    await emitAgentEventAsync(id, { kind: 'mention', board: project, task, from, customerVisible })
+  }
+
+  const replied = replyRecipients({ actorId, owners: comment.owners, writers: comment.writers, replyToId: comment.replyToId, watches: userId => agentEventHub.watches(userId) })
+  for (const { userId, needsFeedbackFromMe } of replied) {
+    if (mentioned.has(userId)) continue
+    await emitAgentEventAsync(userId, { kind: 'reply', board: project, task, from, customerVisible, needsFeedbackFromMe })
+  }
+}
+
+/** The people on the board a comment names with @name or @first-name, other than whoever wrote it. */
+async function mentionedIn(project: Project, body: string, actorId: string | null): Promise<Set<string>> {
+  const found = new Set<string>()
+  for (const person of await projectPeople(project)) {
+    if (person.id === actorId || !agentEventHub.watches(person.id)) continue
+    const names = [person.name, person.name.split(/\s+/)[0] ?? ''].filter(name => name.length > 0)
+    if (names.some(name => namedIn(body, name))) found.add(person.id)
+  }
+  return found
+}
+
+function namedIn(body: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`@${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(body)
 }
 
 /**
@@ -98,4 +153,29 @@ export async function notifyTaskChange(project: Project, task: Task, actorId: st
     title: `${await nameOf(actorId)} updated "${task.title}"`,
     body: changes.join(' · ')
   })
+  // Agents hear of a card that reached a column they watch for.
+  emitInBackground(() => tellAgentsOfMove(project, task, actorId, changes))
+}
+
+// The columns an agent hears about when a card reaches them.
+const AGENT_MOVE_COLUMNS = new Set(['verify', 'ready for live', 'done', 'bugs'])
+
+/** The column a card was moved into, when this change says it was moved. */
+async function movedTo(task: Task, changes: string[]): Promise<string | null> {
+  if (!changes.some(change => change.startsWith('Moved to '))) return null
+  const [row] = await db.select({ name: projectColumns.name }).from(projectTasks)
+    .innerJoin(projectColumns, eq(projectColumns.id, projectTasks.columnId))
+    .where(eq(projectTasks.id, task.id))
+  return row?.name ?? null
+}
+// The agents hear of a card that reached a column they watch for: its owners hear of it.
+async function tellAgentsOfMove(project: Project, task: Task, actorId: string | null, changes: string[]) {
+  const destination = await movedTo(task, changes)
+  if (!destination || !AGENT_MOVE_COLUMNS.has(destination.toLowerCase())) return
+  const from = await nameOf(actorId)
+  for (const id of new Set([task.assigneeId, task.createdBy])) {
+    if (id && id !== actorId) {
+      await emitAgentEventAsync(id, { kind: 'task_moved', board: project, task, from, customerVisible: task.visibility === 'customer' })
+    }
+  }
 }
