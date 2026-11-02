@@ -3,6 +3,7 @@ import { randomInt } from 'crypto'
 import { db } from '../db'
 import { customerMembers, member, projects, projectTasks, taskComments } from '../db/schema'
 import { eq, and, inArray, isNull, or } from 'drizzle-orm'
+import { CUSTOMER_COMMENT_VISIBILITY } from './commentVisibility'
 
 export async function getUserActiveTeamId(event: H3Event): Promise<string | null> {
   const session = event.context.session
@@ -107,7 +108,7 @@ export function taskVisibilityFilter(audience: Audience) {
 
 /** The same rule for comments. */
 export function commentVisibilityFilter(audience: Audience) {
-  return audience === 'customer' ? eq(taskComments.visibility, 'customer') : undefined
+  return audience === 'customer' ? eq(taskComments.visibility, CUSTOMER_COMMENT_VISIBILITY) : undefined
 }
 
 const JOIN_CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no I/L/O/0/1 — avoids visual ambiguity

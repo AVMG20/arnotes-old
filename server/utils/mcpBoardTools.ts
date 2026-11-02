@@ -3,13 +3,13 @@
 // `boards:*` key. They run against the database here, scoped to the workspace of
 // the API key, and mirror the HTTP endpoints the browser uses so a board changed
 // by an agent is indistinguishable from one changed by hand.
-import { and, asc, count, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, count, eq, gt, inArray, isNull } from 'drizzle-orm'
 import { db } from '../db'
 import { projects, projectColumns, projectTasks, taskComments, user, apiKeys } from '../db/schema'
 import type { Project, ProjectColumn, ProjectTask } from '../db/schema'
 import type { ApiKeyContext } from './api-keys'
 import { audienceOf, boardFilter, readableTasksIn, requireStaffAudience } from './mcpAccess'
-import { commentVisibilityFilter, taskVisibilityFilter } from './auth-helpers'
+import { commentVisibilityFilter, taskVisibilityFilter, type Audience } from './auth-helpers'
 import { htmlToMarkdown, htmlToPlainText, markdownToHtml } from './markdown'
 import { columnTasksOrdered, positionBetween, projectColumnsOrdered, renumberColumnTasks, RESTORED, nextSubtaskPosition, subtasksOrdered } from './projects'
 import { ACCENT_COLORS, isAccentColor } from '#shared/utils/colors'
@@ -25,6 +25,8 @@ import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
 import { checkFieldValues, describeFieldValues, listFields, loadFieldValues, setFieldValues } from './customFields'
 import { attachReplyPreviews } from './taskComments'
+import { capThread, parseSinceTime, readThreadOptions, selectUpdates, SINCE_REFUSAL, THREAD_CAP, THREAD_CAP_NOTE } from './threadOptions'
+import type { ThreadOptions } from './threadOptions'
 
 const MAX_LABELS = 10
 const DEFAULT_COLUMN_NAMES = ['Backlog', 'To do', 'Verify', 'Done']
@@ -312,17 +314,34 @@ function taskCard(task: ProjectTask, options: {
   }
 }
 
-async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyContext) {
+/**
+ * The moment get_task's since names: a zoned ISO time, or the time of an update this caller
+ * can see on the task. Any other id reads as unknown, so a hidden update leaks nothing.
+ */
+async function sinceMoment(taskId: string, since: string, audience: Audience): Promise<number> {
+  const time = parseSinceTime(since)
+  if (time !== undefined) return time
+  const [marker] = await db
+    .select({ createdAt: taskComments.createdAt })
+    .from(taskComments)
+    .where(and(eq(taskComments.id, since), eq(taskComments.taskId, taskId), commentVisibilityFilter(audience)))
+  if (!marker) throw new McpToolError(SINCE_REFUSAL)
+  return marker.createdAt
+}
+
+async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyContext, thread: ThreadOptions) {
   const audience = audienceOf(context, board)
   const columns = await projectColumnsOrdered(board.id)
   const column = columns.find(c => c.id === task.columnId)
 
-  const updates = await db
+  const sinceAt = thread.since === undefined ? undefined : await sinceMoment(task.id, thread.since, audience)
+  const fetched = await db
     .select({
       id: taskComments.id,
       body: taskComments.body,
       replyToId: taskComments.replyToId,
       createdAt: taskComments.createdAt,
+      visibility: taskComments.visibility,
       createdVia: taskComments.createdVia,
       authorName: user.name,
       keyName: apiKeys.name
@@ -330,8 +349,14 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
     .from(taskComments)
     .leftJoin(user, eq(user.id, taskComments.userId))
     .leftJoin(apiKeys, eq(apiKeys.id, taskComments.apiKeyId))
-    .where(and(eq(taskComments.taskId, task.id), commentVisibilityFilter(audience)))
+    .where(and(eq(taskComments.taskId, task.id), commentVisibilityFilter(audience), sinceAt === undefined ? undefined : gt(taskComments.createdAt, sinceAt)))
     .orderBy(asc(taskComments.createdAt))
+    .limit(THREAD_CAP + 1)
+
+  // The filters and the limit apply to what this caller may see, so the counts never include internal updates for a customer.
+  // The read stops one past the cap, so a longer thread is seen and reported rather than loaded whole.
+  const { rows: updates, truncated } = capThread(fetched)
+  const selected = selectUpdates(updates, thread, audience)
 
   return {
     id: task.id,
@@ -353,7 +378,7 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
     // an agent here or by a person in the app, so they pass through untouched.
     // An agent's update is attributed to its key, not to the key's owner, so a
     // thread reads back as the conversation it was.
-    updates: (await attachReplyPreviews(task.id, updates, audience)).map(update => ({
+    updates: (await attachReplyPreviews(task.id, selected.shown, audience)).map(update => ({
       id: update.id,
       author: update.createdVia === 'mcp'
         ? `${update.keyName ?? 'MCP key'} (agent)`
@@ -362,7 +387,10 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
       at: new Date(update.createdAt).toISOString(),
       // The comment this one answers, as the app shows it (see taskComments.ts).
       replyTo: update.replyTo
-    }))
+    })),
+    updatesMatched: selected.matched,
+    updatesShown: selected.shown.length,
+    ...(truncated ? { threadNote: THREAD_CAP_NOTE } : {})
   }
 }
 
@@ -600,19 +628,24 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_task',
     title: 'Read a task',
-    description: 'Read one task in full: its column, Markdown description, labels, the GitHub items linked to it (the ones the key\'s person may see, with their state and pull requests) and the whole thread of updates posted on it. This is where the complete description lives — get_board and search_tasks only carry the opening of it.',
+    description: 'Read one task in full: its column, Markdown description, labels, the GitHub items linked to it (the ones the key\'s person may see, with their state and pull requests) and the thread of updates posted on it. This is where the complete description lives — get_board and search_tasks only carry the opening of it. The thread comes oldest first. On a long one, read a slice: "limit" (1 to 200) keeps the oldest updates, or the newest ones with order "newest"; "since" keeps updates after a full ISO 8601 time with a zone (such as 2026-11-02T10:00:00Z) or after an update id; "prefix" keeps updates whose body starts with that text, ignoring case. Filters apply before the limit. One example per option: {"id":"<task id>","limit":5} gives the five oldest updates; {"id":"<task id>","order":"newest"} gives the thread newest first; {"id":"<task id>","since":"2026-11-02T10:00:00Z"} gives the updates after that time; {"id":"<task id>","prefix":"QUESTION"} gives only the updates that start with QUESTION. The result says updatesMatched (how many matched in all) and updatesShown (how many came back): when they differ you have a slice. Counts cover only the updates you may see, and the id of an update you may not see is refused as unknown. There is no paging: to read on, pass since with the id of the last update you have, which is the cursor to prefer. since is strictly after, so with either form an update made in the same millisecond as the mark is left out. A thread over 5000 updates is cut and the result says so (threadNote): use since.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The task id, or a link to the task copied from the app.' }
+        id: { type: 'string', description: 'The task id, or a link to the task copied from the app.' },
+        limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Most updates to return, 1 to 200. Keeps the oldest updates, or the newest when order is "newest". Left out, every matching update is returned.' },
+        order: { type: 'string', enum: ['oldest', 'newest'], description: 'Order of the updates: "oldest" first (the default) or "newest" first.' },
+        since: { type: 'string', description: 'Only updates strictly after this: a full ISO 8601 time with a zone, such as 2026-11-02T10:00:00Z, or the id of an update on this task you can see. An update in the same millisecond is left out.' },
+        prefix: { type: 'string', description: 'Only updates whose body starts with this text, ignoring case, such as NITPICKER: or QUESTION.' }
       },
       required: ['id']
     },
     async handler(args, context) {
+      const thread = readThreadOptions(args)
       const { task, board } = await findTask(requireString(args, 'id'), context)
-      return taskDetail(task, board, context)
+      return taskDetail(task, board, context, thread)
     }
   },
   {
