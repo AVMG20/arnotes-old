@@ -246,3 +246,15 @@ test('a list entry that is not a plain file name is refused', () => {
     }
   }
 })
+
+// A template names a kit script (tm.mjs, listen.mjs, watch.mjs, ...) through {{kit_dir}}: the scripts
+// sit in the kit folder, and {{crew_dir}} is CREW_HOME, which holds only the documents and crew.json.
+test('no kit document names a kit script under {{crew_dir}}', () => {
+  const offenders: string[] = []
+  for (const name of readdirSync(KIT_DIR)) {
+    if (!/\.(tmpl|md)$/.test(name)) continue
+    const text = readFileSync(join(KIT_DIR, name), 'utf8')
+    for (const match of text.matchAll(/\{\{crew_dir\}\}\/[\w.-]+\.(mjs|sh)\b/g)) offenders.push(`${name}: ${match[0]}`)
+  }
+  assert.deepEqual(offenders, [], 'a script is named under {{crew_dir}}; use {{kit_dir}}')
+})

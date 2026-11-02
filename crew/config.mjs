@@ -65,7 +65,7 @@ export function loadCreds() {
 
 /** Flat view of the config for templates: {{product.name}}, {{chat.channel}}, {{crew_dir}} ... */
 export function templateValues() {
-  const out = { crew_dir: home, today: new Date().toISOString().slice(0, 10) }
+  const out = { crew_dir: home, kit_dir: kitDir, today: new Date().toISOString().slice(0, 10) }
   const walk = (prefix, value) => {
     if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) walk(prefix ? `${prefix}.${k}` : k, v)
     else out[prefix] = String(value ?? '')
