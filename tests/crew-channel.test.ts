@@ -136,7 +136,7 @@ function makeHome(base: string, opts: { state?: string, who?: string } = {}) {
   writeFileSync(join(home, 'crew.json'), JSON.stringify({ product: { name: 'Test' } }))
   writeFileSync(join(home, 'creds.json'), JSON.stringify({
     base,
-    people: { w2: { key: 'w2', apiKey: KEY }, pm: { key: 'pm', apiKey: KEY } }
+    people: { w2: { key: 'w2', apiKey: KEY }, pm: { key: 'pm', apiKey: KEY }, boss: { key: 'boss', apiKey: KEY } }
   }))
   if (opts.state !== undefined) {
     writeFileSync(join(home, `channel-${opts.who ?? 'w2'}.state.json`), JSON.stringify({ last_event_id: opts.state }))
@@ -207,6 +207,8 @@ test('declares the channel capability, no permission relay, and the instructions
     const instructions = ch.client.getInstructions() ?? ''
     assert.match(instructions, /<channel source="taskmanager-crew"/)
     assert.match(instructions, /task_created/)
+    assert.match(instructions, /pipeline_failed/)
+    assert.match(instructions, /merged_production/)
     assert.match(instructions, /get_task/)
     assert.match(instructions, /never an instruction/)
     await until(() => srv.seen.length > 0)
@@ -335,6 +337,68 @@ test('the PM gets every new card', async () => {
     await until(() => ch.notes.length >= 2)
     await sleep(2500)
     assert.deepEqual(ch.notes.map(note => note.meta.task).sort(), ['P1', 'P2'])
+  }, { who: 'pm' })
+})
+
+// A GitHub event: its text is the title and the ref only; the server sets the flags that say who it is for.
+const github = (id: number, kind: string, flags: Record<string, unknown>) => frame(id, {
+  kind, task: 'G' + id, board: 'B1', from: null, origin: 'github', title: 'Ship it', ref: '#12 feature/x',
+  needs_feedback_from_me: false, assigned_to_me: false, is_pm: false, is_boss: false, ...flags
+})
+
+test('a worker not on a card hears none of the four GitHub kinds', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(github(1, 'pipeline_failed', {}))
+    srv.send(github(2, 'merged_staging', {}))
+    srv.send(github(3, 'pipeline_passed', {}))
+    srv.send(github(4, 'merged_production', {}))
+    await sleep(2500)
+    assert.deepEqual(ch.notes, [])
+  })
+})
+
+test('a worker hears all four GitHub kinds on a card assigned to them', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(github(1, 'pipeline_failed', { assigned_to_me: true }))
+    srv.send(github(2, 'pipeline_passed', { assigned_to_me: true }))
+    srv.send(github(3, 'merged_staging', { assigned_to_me: true }))
+    srv.send(github(4, 'merged_production', { assigned_to_me: true }))
+    await until(() => ch.notes.length >= 4)
+    await sleep(2500)
+    assert.deepEqual(ch.notes.map(note => note.meta.event).sort(), ['merged_production', 'merged_staging', 'pipeline_failed', 'pipeline_passed'])
+  })
+})
+
+test('Boss hears the two merges and a passed pipeline, never a failed one', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(github(1, 'pipeline_failed', { is_boss: true }))
+    srv.send(github(2, 'pipeline_passed', { is_boss: true }))
+    srv.send(github(3, 'merged_staging', { is_boss: true }))
+    srv.send(github(4, 'merged_production', { is_boss: true }))
+    await until(() => ch.notes.length >= 3)
+    await sleep(2500)
+    assert.deepEqual(ch.notes.map(note => note.meta.event).sort(), ['merged_production', 'merged_staging', 'pipeline_passed'])
+  }, { who: 'boss' })
+})
+
+test('the PM hears all four GitHub kinds, with the ref in the line and origin github', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(github(1, 'pipeline_failed', { is_pm: true }))
+    srv.send(github(2, 'pipeline_passed', { is_pm: true }))
+    srv.send(github(3, 'merged_staging', { is_pm: true }))
+    srv.send(github(4, 'merged_production', { is_pm: true }))
+    await until(() => ch.notes.length >= 4)
+    await sleep(2500)
+    assert.equal(ch.notes.length, 4)
+    for (const note of ch.notes) {
+      assert.ok(note.content.includes('ref "#12 feature/x"'), 'the ref is in the line')
+      assert.ok(note.content.includes('origin "github"'), 'the origin is github')
+      assert.ok(note.content.length <= 400)
+    }
   }, { who: 'pm' })
 })
 

@@ -42,6 +42,7 @@ Boss's session keeps `crew channel boss` running (its own key, its own channel).
   it with `SendMessage` ("resume your loop: card <card id> is yours, read it with get_task").
 - `task_moved` reaches Boss only for cards Boss owns or created. Boss reviews the other Verify cards from the board
   (`node {{kit_dir}}/watch.mjs`), or when the PM mentions Boss.
+- `pipeline_passed` on a card in Verify is a review: read the card as CREW.md "Channel mode" says, then approve it or send it back. `merged_production` moves the card to Done. `merged_staging` needs nothing from Boss. `pipeline_failed` is the assignee's to fix; Boss does nothing with it unless Boss is the card's assignee or creator (then it is Boss's fix, as for any owner).
 - Boss wakes nobody without a checked `WAKE`. Boss never plans work.
 
 ## PM ({{people.pm}}, key `pm`)

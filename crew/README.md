@@ -111,14 +111,31 @@ and `origin` (empty except on `task_created`). The text is one line, for example
 - `reply` with `needs_feedback_from_me`: the text ends with ` [needs your feedback]`. It means you have asked a
   `QUESTION:` on that card at some point. It does not say whether this reply answers that question.
 - Several events on one card that arrive within two seconds of the first one are one line: `2 events for task "<card id>": ...`.
-- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`.
+- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`, and the four GitHub kinds below.
   - `task_created` reaches only members who are streaming now or were active in the last 24 hours. The channel passes
     it on to a worker only when the card is assigned to that worker.
   - `task_moved` reaches only the card's assignee and creator, and only when the card moves into Verify, Ready for
     live, Done or Bugs. Nobody else hears of the move.
-  - `origin` is `person`, `agent` or `rule`. The contract has a fourth value, `github`, which is not emitted yet
-    (there is no GitHub webhook). A card made by the GitHub sync script (`issuesync.mjs`) goes through the agent
-    API, so it arrives with `origin "agent"`.
+  - `origin` is `person`, `agent` or `rule`, or `github` on the four GitHub kinds below. Nothing emits those until the
+    GitHub webhook slice lands. A card made by the GitHub sync script (`issuesync.mjs`) goes through the agent API, so
+    it arrives with `origin "agent"`.
+- The GitHub kinds: `pipeline_failed`, `pipeline_passed`, `merged_staging` and `merged_production`. They are about a
+  pull request linked to a card: a check failed or passed on it, or it was merged into staging or production. The text
+  is the card title and ` ref "..."` (the pull request number and its branch, cut to 60 characters). No text from
+  GitHub is in them: no body, no comment, no check log. The server decides who hears each one, and the event says so
+  with `is_pm`, `is_boss` and `assigned_to_me`. They reach the crew once the GitHub webhook slice (GH3) is on master;
+  before that nothing emits them.
+  - The PM hears all four. `pipeline_failed` and `pipeline_passed`: nothing for the PM to do (the assignee fixes,
+    Boss reviews). `merged_staging`: check the staging result and tell the customer. `merged_production`: nothing
+    (Boss moves the card to Done).
+  - The worker the card is assigned to hears all four. `pipeline_failed` means: read the failure on the pull request
+    and fix it on the same card. No new card.
+  - Boss hears `merged_staging` and `merged_production`, and `pipeline_passed` on a card in Verify. Boss hears
+    `pipeline_failed` only as the card's assignee or creator, and then it is that owner's fix, as for any owner.
+    `pipeline_passed` on a card in Verify is Boss's review; `merged_production` is the card going to Done.
+  - The card's assignee and creator hear all four, as the PM does. A team that is not a crew gets its owners and
+    assignees only. A customer never hears any of them.
+  - A failed and then a passed pair on one card within two seconds comes as one line, both kinds in `event`, in order.
 - The card body is never in the event. Read it with `get_task`.
 
 **If events do not arrive:**
