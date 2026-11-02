@@ -352,7 +352,7 @@ export const taskActivity = pgTable(
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
     // How it was done: the app, an agent over MCP, or the AI assistant.
-    via: text('via').$type<DeletionSource>().notNull().default('ui'),
+    via: text('via').$type<ActivitySource>().notNull().default('ui'),
     kind: text('kind').$type<TaskActivityKind>().notNull(),
     detail: json('detail').$type<Record<string, string | null>>().notNull().default({}),
     createdAt: bigint('created_at', { mode: 'number' }).notNull()

@@ -89,7 +89,8 @@ const ACTIVITY_ICONS: Record<TaskActivityItem['kind'], string> = {
   due: 'i-lucide-calendar',
   start: 'i-lucide-calendar-clock',
   renamed: 'i-lucide-pencil',
-  visibility: 'i-lucide-eye'
+  visibility: 'i-lucide-eye',
+  label: 'i-lucide-tag'
 }
 
 function activityIcon(kind: TaskActivityItem['kind']) {
@@ -97,7 +98,9 @@ function activityIcon(kind: TaskActivityItem['kind']) {
 }
 
 function activityActor(item: TaskActivityItem) {
-  // A change a rule made names the rule, not the person who saved the rule.
+  // A change the GitHub sync made names GitHub: the owner's account only writes it.
+  if (item.via === 'github') return 'GitHub'
+  if (item.detail.rule) return `Rule: ${item.detail.rule}`
   if (item.detail.rule) return `Rule: ${item.detail.rule}`
   return item.actorName ?? 'Someone'
 }
@@ -120,6 +123,7 @@ function activityText(item: TaskActivityItem) {
     case 'start': return to ? `set the start date to ${activityDay(to)}${how}` : `cleared the start date${how}`
     case 'renamed': return `renamed this task to “${to}”${how}`
     case 'visibility': return `made this task ${to}${how}`
+    case 'label': return from ? `removed the label “${from}”` : `added the label “${to}”`
   }
 }
 
