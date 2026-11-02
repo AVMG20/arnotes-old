@@ -522,7 +522,7 @@ defineExpose({ handleEscape })
                  one is named, not linked. -->
               <template v-if="comment.replyTo">
                 <button
-                  v-if="!comment.replyTo.deleted"
+                  v-if="!comment.replyTo.deleted && comment.replyTo.id"
                   type="button"
                   class="mt-0.5 flex max-w-full items-center gap-1 rounded text-left text-xs text-muted hover:text-default focus-visible:ring-2 focus-visible:ring-primary"
                   :aria-label="`${replyLineText(comment.replyTo)}. Show that comment.`"

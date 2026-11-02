@@ -24,6 +24,8 @@ const BOARD_IS_RESULT = new Set(['create_board', 'update_board'])
 // back from the database by that id, so the row names the task that changed.
 const TASK_ARGUMENT: Record<string, string> = {
   post_task_update: 'id',
+  edit_task_update: 'id',
+  delete_task_update: 'id',
   update_task: 'id',
   move_task: 'id',
   delete_task: 'id',
@@ -87,6 +89,8 @@ const SUMMARIES: Record<string, Summary> = {
   delete_task: () => 'Deleted the task (in the trash for 7 days)',
   restore_task: v => v.alreadyActive ? 'Restored the task (it was not in the trash)' : 'Restored the task from the trash',
   post_message: v => `${v.message?.replyTo ? 'Replied to a message' : 'Posted a message'}: ${quote(v.message?.title ?? notificationExcerpt(v.message?.body ?? ''))}`,
+  edit_task_update: v => `Edited an update (id ${v.update?.id}, ${v.update?.length} characters), marked edited`,
+  delete_task_update: v => `Deleted an update for ${v.update?.visibility === 'customer' ? 'the customer' : 'the team'} (id ${v.update?.id}, ${v.update?.length} characters)`,
   post_task_update: v => `Posted an update${v.update?.visibility === 'customer' ? ' for the customer' : ''}: ${quote(v.update?.excerpt)}`,
   post_status_update: v => `Posted a status update (${v.update?.status}): ${quote(notificationExcerpt(v.update?.body ?? ''))}`,
   create_field: v => `Added the field ${quote(v.field?.name)} (${v.field?.type})`,
@@ -115,7 +119,7 @@ function clip(text: string): string {
   return flat.length > MAX_SUMMARY ? `${flat.slice(0, MAX_SUMMARY - 1)}…` : flat
 }
 
-function summaryOf(tool: McpToolDefinition, args: Record<string, unknown>, value: unknown): string {
+export function summaryOf(tool: McpToolDefinition, args: Record<string, unknown>, value: unknown): string {
   try {
     const summary = SUMMARIES[tool.name]
     const text = summary ? summary((value ?? {}) as Loose, args) : tool.title

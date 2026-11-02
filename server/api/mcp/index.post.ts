@@ -28,7 +28,7 @@ Search or list before answering questions about the user's boards, and ground an
 
 The list-shaped results are deliberately short: get_board and search_tasks return each task as its card — title, labels and the opening of the description, ending in an ellipsis when there is more. Read one thing in full with get_task rather than asking a board for every description at once.
 
-Nothing here deletes permanently. delete_column and delete_task move things to the trash, undone with restore_column and restore_task, and the user can see and restore both under "Show trashed" on the board itself. A board's trash is emptied after 7 days.
+Nothing here deletes permanently, with one exception: delete_task_update removes an update for good, with no trash. delete_column and delete_task move things to the trash, undone with restore_column and restore_task, and the user can see and restore both under "Show trashed" on the board itself. A board's trash is emptied after 7 days.
 
 There is no tool for deleting a board — that stays with the user, in the app. Deleting is still the wrong move most of the time: a finished task belongs in a "Done" column via move_task, not in the trash. Say what you are about to delete and why before you do it, and when a delete turns out to be wrong, restore it rather than recreating it — a restored task keeps its updates and its place on the board.`
 

@@ -4,7 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../db'
-import { githubLinks, projectColumns, projectGithubRepos, projects, projectTasks, taskActivity, taskComments } from '../db/schema'
+import { githubDeliveries, githubLinks, projectColumns, projectGithubRepos, projects, projectTasks, taskActivity, taskComments } from '../db/schema'
 import type { ProjectTask } from '../db/schema'
 import { announceTaskCreated } from './agentEvents'
 import { genId } from './projects'
@@ -12,6 +12,7 @@ import { notifyComment } from './notifyEvents'
 import { publish, workspaceTopic } from './realtime'
 import type { ActivityEntry } from './taskActivity'
 import type { CardPatch, CardTask, GithubCardStore, NewIssueCard, SyncedRepo } from './githubCards'
+import type { DeliveryLedger } from './githubDeliveryConsumer'
 
 /** The database handle the store uses. The real one in the app; a fake in the tests. */
 export type CardDatabase = typeof db
@@ -214,9 +215,10 @@ export function makeDatabaseCardStore(database: CardDatabase): GithubCardStore {
 
     async hasUpdate(task, marker) {
       // Only the tail counts: a marker pasted into the middle of a comment does not match.
+      // The syncer writes its markers as the owner's app updates (createdVia 'ui'), so an agent's update never counts.
       const [row] = await database.select({ id: taskComments.id })
         .from(taskComments)
-        .where(and(eq(taskComments.taskId, task.id), sql`right(${taskComments.body}, ${marker.length}) = ${marker}`))
+        .where(and(eq(taskComments.taskId, task.id), eq(taskComments.createdVia, 'ui'), sql`right(${taskComments.body}, ${marker.length}) = ${marker}`))
         .limit(1)
       return row !== undefined
     },
@@ -243,3 +245,24 @@ export function makeDatabaseCardStore(database: CardDatabase): GithubCardStore {
 }
 
 export const databaseCardStore: GithubCardStore = makeDatabaseCardStore(db)
+
+/** The record of applied deliveries (github_deliveries): the consumer skips a delivery that is in it. */
+export function makeDeliveryLedger(database: CardDatabase): DeliveryLedger {
+  return {
+    async succeeded(deliveryId) {
+      const [row] = await database.select({ id: githubDeliveries.id })
+        .from(githubDeliveries)
+        .where(eq(githubDeliveries.id, deliveryId))
+        .limit(1)
+      return row !== undefined
+    },
+
+    async recordSucceeded(entry) {
+      await database.insert(githubDeliveries)
+        .values({ id: entry.deliveryId, event: entry.event, owner: entry.owner, repo: entry.repo, receivedAt: entry.receivedAt })
+        .onConflictDoNothing()
+    }
+  }
+}
+
+export const databaseDeliveryLedger: DeliveryLedger = makeDeliveryLedger(db)

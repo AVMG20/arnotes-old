@@ -109,7 +109,7 @@ export interface TaskComment {
 
 // What a reply points back at, as the server previews it for the viewer.
 export interface CommentReplyPreview {
-  id: string
+  id: string | null
   authorName: string | null
   excerpt: string
   deleted: boolean

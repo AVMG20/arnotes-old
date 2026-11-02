@@ -21,7 +21,8 @@ export interface McpToolDefinition {
   collection?: WorkspaceCollection
   /**
    * Advertised for the writes that cannot be undone, so a client can warn
-   * first. Nothing sets it today: every delete an agent can reach goes to a
+   * first. Set on the deletes that remove for good, with no trash: delete_task_update
+   * and the project secret deletes. Every other delete an agent can reach goes to a
    * trash the user can empty or undo, and boards cannot be deleted over MCP
    * at all.
    */
