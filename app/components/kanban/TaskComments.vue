@@ -300,17 +300,21 @@ const editDraft = ref('')
 
 // A `ref` inside v-for collects into an array; only one edit box is ever open,
 // so it is kept by hand.
-let editComposer: { focus: () => void } | null = null
+let editComposer: { $el?: HTMLElement } | null = null
 
 function setEditComposer(el: unknown) {
-  editComposer = el as { focus: () => void } | null
+  editComposer = el as { $el?: HTMLElement } | null
 }
 
 async function startEdit(comment: TaskComment) {
   editingId.value = comment.id
   editDraft.value = comment.body
   await nextTick()
-  editComposer?.focus()
+  // The options menu that started the edit is still closing and holds the drawer's
+  // focus trap. Focus the box once it has let go, or the trap keeps the box's focus
+  // from being recorded and steals it back on the next change in the drawer.
+  await new Promise(resolve => setTimeout(resolve, 50))
+  editComposer?.$el?.querySelector('textarea')?.focus()
 }
 
 function cancelEdit() {
@@ -320,7 +324,8 @@ function cancelEdit() {
 
 async function saveEdit() {
   const id = editingId.value
-  const body = editDraft.value.trim()
+  // Only spaces, tabs and line ends go: a no-break space in a stored body stays.
+  const body = editDraft.value.replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '')
   if (!id) return
   // Emptying an update is not how it gets removed; that asks first.
   if (!body) return
@@ -390,7 +395,16 @@ function handleEscape(): boolean {
 }
 
 function onComposerEscape(event: KeyboardEvent) {
+  // Escape during an IME composition only ends the composition.
+  if (event.isComposing || event.keyCode === 229) return
   if (handleEscape()) event.stopPropagation()
+}
+
+// Enter saves an edit, except while an IME is still composing a word.
+function onEditEnter(event: KeyboardEvent) {
+  if (event.isComposing) return
+  event.preventDefault()
+  saveEdit()
 }
 
 defineExpose({ handleEscape })
@@ -532,11 +546,16 @@ defineExpose({ handleEscape })
                 v-if="editingId === comment.id"
                 class="mt-1 rounded-md border border-default bg-elevated/40 px-2.5 py-2"
               >
-                <UpdateComposer
+                <UTextarea
                   :ref="setEditComposer"
                   v-model="editDraft"
+                  aria-label="Edit the comment"
                   placeholder="Edit the comment…"
-                  @submit="saveEdit"
+                  autoresize
+                  :rows="2"
+                  class="w-full"
+                  @keydown.enter.exact="onEditEnter"
+                  @keydown.esc="onComposerEscape"
                 />
                 <div class="mt-2 flex flex-wrap items-center justify-end gap-1">
                   <span class="mr-auto text-[0.6875rem] text-dimmed">Enter to save · Esc to cancel</span>

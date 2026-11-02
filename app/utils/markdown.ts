@@ -1,4 +1,5 @@
 import { marked } from 'marked'
+import { createCommentMarked, highlightExtension, SAFE_URL } from '#shared/utils/commentMarkdown'
 import TurndownService from 'turndown'
 
 // Common LaTeX math symbols that might survive in editor content
@@ -190,22 +191,7 @@ export function convertTaskLists(root: ParentNode) {
   })
 }
 
-// `==text==` → `<mark>`, which Marked has no syntax for.
-marked.use({
-  extensions: [{
-    name: 'highlight',
-    level: 'inline',
-    start: (src: string) => src.indexOf('=='),
-    tokenizer(src: string) {
-      const match = /^==(?=\S)([^\n]*?\S)==/.exec(src)
-      if (!match) return undefined
-      return { type: 'highlight', raw: match[0], tokens: this.lexer.inlineTokens(match[1]!) }
-    },
-    renderer(token) {
-      return `<mark>${this.parser.parseInline(token.tokens ?? [])}</mark>`
-    }
-  }]
-})
+marked.use({ extensions: [highlightExtension] })
 
 export function markdownToHtml(text: string): string {
   const raw = marked.parse(text, { async: false, gfm: true }) as string
@@ -229,19 +215,32 @@ export function normalizeAiOutput(text: string): string {
 
 const ALLOWED_TAGS = new Set([
   'A', 'B', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-  'HR', 'I', 'INPUT', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY',
+  'HR', 'I', 'INPUT', 'LI', 'MARK', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY',
   'TD', 'TH', 'THEAD', 'TR', 'UL'
 ])
 const ALLOWED_ATTRS = new Set(['href', 'title', 'type', 'checked', 'disabled', 'align'])
-const SAFE_URL = /^(https?:|mailto:|#|\/)/i
+
+const HTML_NS = 'http://www.w3.org/1999/xhtml'
+// Removed with everything inside them: their text was never meant to be read.
+const DROPPED_WITH_CONTENT = new Set(['script', 'style', 'textarea', 'title', 'noscript', 'template', 'iframe', 'object', 'embed'])
 
 // Model output is rendered with v-html, so it is treated as untrusted: only a
 // markdown-shaped subset of tags and attributes survives.
+// Comments and chat replies draw on the client only (ssr is off in nuxt.config.ts), so
+// there is no server DOM to clean: returning '' there is the safe answer, never raw HTML.
 export function sanitizeHtml(html: string): string {
   if (!import.meta.client) return ''
   const doc = new DOMParser().parseFromString(html, 'text/html')
   for (const el of [...doc.body.querySelectorAll('*')]) {
-    if (!ALLOWED_TAGS.has(el.tagName)) {
+    // Dropped with their text in any namespace: an SVG or MathML script has a lowercase
+    // tagName and would otherwise be unwrapped into the comment.
+    const tag = el.localName.toLowerCase()
+    if (DROPPED_WITH_CONTENT.has(tag)) {
+      el.remove()
+      continue
+    }
+    // Foreign-namespace elements (SVG, MathML) never pass for an allowed HTML tag.
+    if (el.namespaceURI !== HTML_NS || !ALLOWED_TAGS.has(el.tagName)) {
       el.replaceWith(...el.childNodes)
       continue
     }
@@ -249,7 +248,7 @@ export function sanitizeHtml(html: string): string {
       const name = attr.name.toLowerCase()
       if (!ALLOWED_ATTRS.has(name)) {
         el.removeAttribute(attr.name)
-      } else if ((name === 'href' || name === 'src') && !SAFE_URL.test(attr.value.trim())) {
+      } else if (name === 'href' && !SAFE_URL.test(attr.value.trim())) {
         el.removeAttribute(attr.name)
       }
     }
@@ -260,6 +259,15 @@ export function sanitizeHtml(html: string): string {
     if (el.tagName === 'INPUT') el.setAttribute('disabled', '')
   }
   return doc.body.innerHTML
+}
+
+// Task comments: see createCommentMarked in shared/utils/commentMarkdown.ts.
+// The sanitiser stays the second layer.
+const commentMarked = createCommentMarked()
+
+export function renderCommentMarkdown(text: string): string {
+  if (!text) return ''
+  return sanitizeHtml(commentMarked.parse(text, { async: false }) as string)
 }
 
 export function renderChatMarkdown(text: string): string {

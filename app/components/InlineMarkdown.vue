@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { renderInlineMarkdown } from '#shared/utils/inlineMarkdown'
+import { renderCommentMarkdown } from '~/utils/markdown'
 
-// Renders a task update: the narrow inline Markdown it is stored as, and
-// nothing else. The HTML is built from escaped text by the shared renderer, so
-// a body posted by an agent over MCP is as safe to draw as one typed here.
+// Renders a task comment: the Markdown it is stored as, drawn like a task description.
+// GFM with breaks: true (a line break stays a line break, as it always did), then the
+// chat sanitiser: fences, lists and headings draw; script stays inert.
+// Bodies from agents over MCP are untrusted, so this is the chat sanitiser, not raw HTML.
 const props = defineProps<{ text: string }>()
 
-const html = computed(() => renderInlineMarkdown(props.text))
+const html = computed(() => renderCommentMarkdown(props.text))
 </script>
 
 <template>
   <div
-    class="inline-md w-full min-w-0 break-words"
+    class="markdown-content comment-body w-full min-w-0 break-words"
     v-html="html"
   />
 </template>

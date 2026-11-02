@@ -680,6 +680,46 @@ summary {
   background-color: var(--ui-bg-elevated);
 }
 
+/* Highlights from `==x==`, in AI replies and task comments alike. */
+.markdown-content mark {
+  padding: 0.05em 0.15em;
+  color: inherit;
+  background-color: #fef08a;
+  border-radius: 0.2em;
+}
+.dark .markdown-content mark {
+  color: #fef9c3;
+  background-color: #713f12;
+}
+
+/* A task comment: the chat renderer's blocks, sized for a drawer. The compound
+   selectors win over the `.markdown-content` rules by specificity, not by the
+   order they are written in. */
+.markdown-content.comment-body {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.6;
+}
+.markdown-content.comment-body p { margin: 0; }
+.markdown-content.comment-body p + p { margin-top: 0.35rem; }
+.markdown-content.comment-body h1,
+.markdown-content.comment-body h2,
+.markdown-content.comment-body h3,
+.markdown-content.comment-body h4,
+.markdown-content.comment-body h5,
+.markdown-content.comment-body h6 {
+  margin: 0.5rem 0 0.2rem;
+  font-size: 0.95rem;
+}
+/* A wide table scrolls inside the comment instead of pushing the drawer wider. */
+.markdown-content.comment-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* ─── Date mention chip ─────────────────────────────────────── */
 
 .date-mention {
