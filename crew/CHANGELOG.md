@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-02: GitHub events for the crew (GH4)
+
+- **`server/utils/agentEvents.ts`: four GitHub kinds.** `pipeline_failed`, `pipeline_passed`, `merged_staging` and
+  `merged_production`, with origin `github` and a `ref` (the pull request number and branch, cut to 60 characters).
+  They reach the crew once the GitHub webhook slice (GH3) is on master; nothing emits them before that.
+  No body, comment or check log is ever in one. The server decides who hears each (`githubAudience`): the card's
+  assignee and creator and the crew's PM hear all four; Boss hears the two merges and `pipeline_passed` on a card in
+  Verify; a team that is not a crew gets its owners only; a customer never. The frame adds `ref`, `is_pm` and
+  `is_boss`. `announceGithubEvent` is the entry point the webhook will call. Nothing calls it yet.
+- **`crew/channel.mjs`.** Learns the four kinds and forwards them by the server's flags: the PM all four, the
+  assigned worker all four, Boss the merges and a passed pipeline. The instructions name each kind; the `ref` is in
+  the line.
+- **`CREW.md.tmpl`, `PROMPTS.md.tmpl`, `README.md`.** What each role does per event: a failed pipeline is the
+  assignee's to fix on the same card (no new card); a passed pipeline on a card in Verify is Boss's review; a merge
+  into staging is the PM's check and the customer's news; a merge into production moves the card to Done.
+
 ## 2026-11-02: channels (events pushed into the PM's session)
 
 - **`channel.mjs`.** The channel server for one member: `node channel.mjs <who>`, or `crew channel <who>`. It pulls

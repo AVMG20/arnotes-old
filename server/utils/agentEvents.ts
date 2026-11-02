@@ -7,23 +7,34 @@
 // The stream, one event at a time:
 //   id: <n>             monotonic per user: max(last + 1, Date.now()), so it does not restart
 //   event: <kind>       task_created | task_assigned | reply | task_moved | mention
-//   data: {"kind","task","board","from","origin","title","needs_feedback_from_me","assigned_to_me"}
+//                       pipeline_failed | pipeline_passed | merged_staging | merged_production
+//   data: {"kind","task","board","from","origin","title","ref","needs_feedback_from_me","assigned_to_me","is_pm","is_boss"}
 //                       task and board are ids; from is the name of who did it; origin is
-//                       person|agent|github|rule on task_created and null otherwise; title is
-//                       cut to 120 characters with control characters removed; the two
+//                       person|agent|github|rule on task_created, github on the GitHub kinds, null otherwise;
+//                       title is cut to 120 characters with control characters removed; the two
 //                       *_me fields are booleans (assigned_to_me: the card's assignee is this
-//                       user when the event was made)
+//                       user when the event was made); ref is the pull request number and the branch on the
+//                       GitHub kinds, cut to 60 characters, else null; is_pm and is_boss are booleans,
+//                       true when this user is the crew's pm or boss key (on the GitHub kinds, else false)
 //   event: backlog_cut  data: {"kind":"backlog_cut","oldest":<id>}, before a replay that has a gap
 //   event: closed       data: {"kind":"closed","reason":"key_revoked"|"disabled"}, then the stream ends
 //   : ping              every 25 s
+// The GitHub kinds come from announceGithubEvent and carry origin "github". They never hold a body, a comment or a
+// check log. The server decides who hears them: an owner (assignee or creator) and the crew's pm hear all four; the
+// crew's boss hears merged_staging, merged_production, and pipeline_passed on a card in Verify (pipeline_failed only as the card's assignee or creator).
+// Nobody else, and never a customer. A team that is not a crew gets its owners only.
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
-import { apiKeys, member, user } from '../db/schema'
+import { apiKeys, crews, member, user } from '../db/schema'
 import { customerIdsOf, isTeamMember } from './auth-helpers'
-import { crewAccountLive } from './crewAccounts'
+import { crewAccountLive, isCrewAddress, normalizeAddress, personKeyOf } from './crewAccounts'
 import { projectPeople } from './people'
 
-export const AGENT_EVENT_KINDS = ['task_created', 'task_assigned', 'reply', 'task_moved', 'mention'] as const
+const CORE_EVENT_KINDS = ['task_created', 'task_assigned', 'reply', 'task_moved', 'mention'] as const
+// What GitHub did to a card's pull request. Only announceGithubEvent emits them.
+export const GITHUB_EVENT_KINDS = ['pipeline_failed', 'pipeline_passed', 'merged_staging', 'merged_production'] as const
+export const AGENT_EVENT_KINDS = [...CORE_EVENT_KINDS, ...GITHUB_EVENT_KINDS] as const
+export type GithubEventKind = (typeof GITHUB_EVENT_KINDS)[number]
 export type AgentEventKind = (typeof AGENT_EVENT_KINDS)[number]
 export type AgentEventOrigin = 'person' | 'agent' | 'github' | 'rule'
 export type AgentAudience = 'staff' | 'customer'
@@ -32,6 +43,8 @@ export type CloseReason = 'key_revoked' | 'disabled'
 const MINUTE = 60_000
 const SWEEP_MS = 10 * MINUTE
 const TITLE_LIMIT = 120
+// A ref (the pull request number and its branch) is cut shorter than a title.
+const REF_LIMIT = 60
 // Consecutive failed key checks before a stream gives up; one transient error is tolerated.
 const MAX_FAILED_CHECKS = 3
 // A key check that takes longer than this counts as a failed check.
@@ -52,7 +65,7 @@ export interface AgentTaskRef { id: string, title: string, assigneeId?: string |
 
 /** One thing that happened, as the code that made it knows it. */
 export interface AgentEventInput {
-  kind: AgentEventKind
+  kind: Exclude<AgentEventKind, GithubEventKind>
   board: AgentBoard
   task: AgentTaskRef
   /** Who did it, by name. */
@@ -62,6 +75,15 @@ export interface AgentEventInput {
   /** Whether a customer may see this item: the card is customer-visible and, for a comment, so is the comment. */
   customerVisible: boolean
   needsFeedbackFromMe?: boolean
+}
+
+/** One GitHub change to a card's pull request. The card's owners are its assignee and its creator. */
+export interface GithubEventInput {
+  kind: GithubEventKind
+  board: AgentBoard
+  task: AgentTaskRef & { createdBy?: string | null, column?: string | null }
+  /** The pull request number and branch, as the event names them. Cut and cleaned like the title. */
+  ref?: string | null
 }
 
 /** An event as it is kept in the backlog. The audience and the board's team and customer stay server-side. */
@@ -74,8 +96,12 @@ export interface AgentEventRecord {
   from: string | null
   origin: AgentEventOrigin | null
   title: string
+  ref: string | null
   needsFeedbackFromMe: boolean
   assignedToMe: boolean
+  /** The crew's pm and boss, for the recipient: true on the GitHub kinds only. */
+  isPm: boolean
+  isBoss: boolean
   audience: AgentAudience
   teamId: string | null
   customerId: string | null
@@ -159,6 +185,8 @@ export function stillMember(record: Pick<AgentEventRecord, 'audience' | 'teamId'
 
 /** The SSE frame for one event. Only ids, the kind, the names, the origin and the cut title. */
 export function frameOfEvent(record: AgentEventRecord): string {
+  // The kind is written raw into the event line, so only a known kind may make a frame: a line break in it would break the stream.
+  if (!isAgentEventKind(record.kind)) throw new Error('an agent event must have a known kind')
   const data = JSON.stringify({
     kind: record.kind,
     task: record.task,
@@ -166,8 +194,11 @@ export function frameOfEvent(record: AgentEventRecord): string {
     from: record.from,
     origin: record.origin,
     title: record.title,
+    ref: record.ref,
     needs_feedback_from_me: record.needsFeedbackFromMe,
-    assigned_to_me: record.assignedToMe
+    assigned_to_me: record.assignedToMe,
+    is_pm: record.isPm,
+    is_boss: record.isBoss
   })
   return `id: ${record.id}\nevent: ${record.kind}\ndata: ${data}\n\n`
 }
@@ -348,6 +379,10 @@ export class AgentEventHub {
 
   /** Keeps an event for a user and sends it to each open stream that may read it. Never blocks on a reader. */
   publish(userId: string, data: Omit<AgentEventRecord, 'id' | 'at'>): void {
+    if (!isAgentEventKind(data.kind)) {
+      rejectKind(data.kind)
+      return
+    }
     if (!this.watches(userId)) return
     const now = this.options.now()
     // Ms since the epoch, and always above the last one: ids never restart, even after a restart.
@@ -617,8 +652,11 @@ export async function emitAgentEventWith(
     from: input.from ? cleanEventText(input.from) || null : null,
     origin: input.origin ?? null,
     title: cleanEventText(input.task.title),
+    ref: null,
     needsFeedbackFromMe: input.needsFeedbackFromMe ?? false,
     assignedToMe: input.task.assigneeId === userId,
+    isPm: false,
+    isBoss: false,
     audience,
     teamId: input.board.teamId,
     customerId: input.board.customerId
@@ -643,6 +681,130 @@ export function emitInBackground(work: () => Promise<unknown>): void {
   } catch (error) {
     console.error('[agent-events] could not emit', error)
   }
+}
+
+/**
+ * Who hears a GitHub change on a card. The card's owners (assignee and creator) hear all four, and that includes
+ * Boss: a Boss who is the assignee or creator gets pipeline_failed like any owner. The crew's pm hears all four.
+ * A Boss who is not an owner hears the two merges, and pipeline_passed while the card is in Verify, never a
+ * failed pipeline. Nobody else does.
+ */
+export function githubAudience(kind: GithubEventKind, role: { owner: boolean, pm: boolean, boss: boolean }, inVerify: boolean): boolean {
+  if (role.owner || role.pm) return true
+  if (!role.boss || kind === 'pipeline_failed') return false
+  return kind !== 'pipeline_passed' || inVerify
+}
+
+/** A person of a crew, with the key the crew gave them (pm, boss, w1...). */
+export interface CrewPerson { userId: string, key: string }
+
+export interface GithubLookups extends AudienceLookups {
+  /** The people of the crew that owns this team, with their keys. Empty unless exactly one crew has the team. */
+  crewPeople(teamId: string): Promise<CrewPerson[]>
+}
+
+/**
+ * The people of a crew from its rows. crews.teamId is an index, not unique: a team is a crew's only when exactly one
+ * crew row has it, otherwise nobody gets a key. An account whose address does not start with the crew's slug is skipped.
+ */
+export function crewPeopleFrom(
+  crewRows: { id: string, slug: string }[],
+  accounts: { id: string, email: string, crewId: string | null }[]
+): CrewPerson[] {
+  if (crewRows.length !== 1) return []
+  const crew = crewRows[0]!
+  return accounts
+    .filter(account => account.crewId === crew.id)
+    .filter(account => isCrewAddress(account.email) && normalizeAddress(account.email).startsWith(crew.slug + '-'))
+    .map(account => ({ userId: account.id, key: personKeyOf(crew.slug, account.email) }))
+}
+
+async function crewPeopleOf(teamId: string): Promise<CrewPerson[]> {
+  const crewRows = await db.select({ id: crews.id, slug: crews.slug }).from(crews).where(eq(crews.teamId, teamId))
+  if (crewRows.length !== 1) return []
+  const accounts = await db.select({ id: user.id, email: user.email, crewId: user.crewId })
+    .from(user).where(eq(user.crewId, crewRows[0]!.id))
+  return crewPeopleFrom(crewRows, accounts)
+}
+
+export const githubDatabaseLookups: GithubLookups = { ...databaseLookups, crewPeople: crewPeopleOf }
+
+/** Whether a kind is one of the agent event kinds: the only kinds a frame may name. */
+export function isAgentEventKind(kind: string): kind is AgentEventKind {
+  return (AGENT_EVENT_KINDS as readonly string[]).includes(kind)
+}
+
+const rejectedKinds = new Set<string>()
+
+/** Logs a kind that is not known, once per kind. Nothing is emitted for it. */
+function rejectKind(kind: string): void {
+  if (rejectedKinds.has(kind)) return
+  rejectedKinds.add(kind)
+  console.error('[agent-events] rejected an event of an unknown kind', JSON.stringify(kind).slice(0, 60))
+}
+
+/** The ref as an event names it: cleaned like a title, then cut to REF_LIMIT characters. */
+function refText(ref: string): string | null {
+  return Array.from(cleanEventText(ref)).slice(0, REF_LIMIT).join('') || null
+}
+
+/**
+ * Keeps a GitHub change for each person who may hear it (githubAudience). Staff only: a customer never hears of one.
+ * An unknown kind emits nothing. No database is read while nobody is watched. Returns how many people it was kept for.
+ * The caller reads task.column from the database at emit time: inVerify trusts it.
+ */
+export async function emitGithubEventWith(hub: AgentEventHub, lookups: GithubLookups, input: GithubEventInput): Promise<number> {
+  if (!(GITHUB_EVENT_KINDS as readonly string[]).includes(input.kind)) {
+    rejectKind(input.kind)
+    return 0
+  }
+  if (!hub.hasWatchers()) return 0
+  const { board, task } = input
+  const owners = [task.assigneeId, task.createdBy].filter((id): id is string => !!id)
+  const crew = board.teamId ? await lookups.crewPeople(board.teamId) : []
+  const keyOf = new Map(crew.map(person => [person.userId, person.key]))
+  const candidates = new Set([...owners, ...crew.filter(person => person.key === 'pm' || person.key === 'boss').map(person => person.userId)])
+  const inVerify = task.column?.toLowerCase() === 'verify'
+  const ref = input.ref ? refText(input.ref) : null
+  let kept = 0
+  for (const userId of candidates) {
+    if (!hub.watches(userId)) continue
+    const staff = board.teamId ? await lookups.isMember(userId, board.teamId) : board.userId === userId
+    if (!staff) continue
+    const key = keyOf.get(userId)
+    const role = { owner: owners.includes(userId), pm: key === 'pm', boss: key === 'boss' }
+    if (!githubAudience(input.kind, role, inVerify)) continue
+    hub.publish(userId, {
+      kind: input.kind,
+      board: board.id,
+      task: task.id,
+      from: null,
+      origin: 'github',
+      title: cleanEventText(task.title),
+      ref,
+      needsFeedbackFromMe: false,
+      assignedToMe: task.assigneeId === userId,
+      isPm: role.pm,
+      isBoss: role.boss,
+      audience: 'staff',
+      teamId: board.teamId,
+      customerId: board.customerId
+    })
+    kept++
+  }
+  return kept
+}
+
+/**
+ * A GitHub change to a card's pull request (the webhook path calls this). Off the request path: it never throws,
+ * and does no database work while nobody is watched.
+ */
+export function announceGithubEvent(input: GithubEventInput): void {
+  if (!(GITHUB_EVENT_KINDS as readonly string[]).includes(input.kind)) {
+    rejectKind(input.kind)
+    return
+  }
+  emitInBackground(() => emitGithubEventWith(agentEventHub, githubDatabaseLookups, input))
 }
 
 /** The name of who did a thing, for the event's `from`. */

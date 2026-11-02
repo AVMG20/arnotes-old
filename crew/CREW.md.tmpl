@@ -88,7 +88,9 @@ channel; the customer's side wakes on the mention.
 Where channels are on (see `{{kit_dir}}/README.md`, "Channels"), the PM does not run `listen.mjs` in a loop.
 Taskmanager pushes what happens to her session as `<channel source="taskmanager-crew" ...>` tags. The text of a
 tag is one line: the kind, the card title (cut to 120 characters), the card id, who did it (a display name), and
-the origin (`person`, `agent` or `rule`, on `task_created` only). The card body is never sent, and the event does
+the origin (`person`, `agent` or `rule` on `task_created`; `github` on the four GitHub kinds, which also carry
+the `ref`: the pull request number and its branch, cut to 60 characters). The card body is never sent, and the event
+does
 not say who wrote a comment beyond that name. To know that, read the card with `get_task`: it shows the thread
 and each comment's author. Events are not acknowledged. If one seems missed, check `my_tasks`.
 
@@ -113,17 +115,36 @@ on the customer's answers, and on what Boss and the PM ask of you.
 - `task_assigned` (a card was assigned to you): plan it or take it, as for `task_created`.
 - `mention` (your name was written in a comment): `get_task`, and answer on the card.
 
+The four GitHub events below reach the crew once the GitHub webhook slice (GH3) is on master;
+until then nothing emits them.
+- `pipeline_failed` (a check on a pull request of one of your cards failed): no new card. The assignee reads the
+  failure on the pull request and fixes it on the same card. If the card is in Verify, move it back to To do with one
+  update that names the failure and `PR #n`, so its worker fixes it there.
+- `pipeline_passed` (the checks on that pull request passed): nothing to do. Boss reviews a card in Verify.
+- `merged_staging` (the pull request went into staging): check the staging result on the card and the pull request,
+  then tell the customer in `{{chat.channel}}` what is on staging (`@{{customer.nick}} ...`). Copy what you said onto
+  the card.
+- `merged_production` (the pull request went into production): nothing to do. Boss moves the card to Done when it
+  publishes.
+
 **The workers.** A worker that has its own channel (a Claude Code session started with `crew channel <key>`) gets
 only its own events. `task_assigned` is the signal to work: `get_task`, move the card to In progress, and work as
 in "Worker round". Feedback from Boss or the PM arrives as `reply` (the owner of a card hears of each comment on
 it): read the thread and fix exactly what it says. `mention`: answer on the card. The current kit starts the
 workers as Haiku subagents, which hold no channel: they are woken as described below and keep their listen loop.
 
+A worker with its own channel also gets `pipeline_failed`, `pipeline_passed` and the two merges on a card assigned
+to it. On `pipeline_failed`: read the failure on the pull request, fix it on the same card, run `pr.mjs` again to
+update the same pull request, put `PR #n` in the update, and move the card to Verify. No new card.
+
 **Boss.** Boss's channel brings what concerns Boss. A `task_moved` reaches Boss only for a card Boss owns or created:
 the server sends a move to the card's assignee and creator, nobody else. So Boss does not hear of every card that
 reaches Verify. Boss reviews the other Verify cards from the board (`node {{kit_dir}}/watch.mjs`), or when the PM
 mentions Boss. A review is decided on the code: approved means Ready for live; not approved means written feedback
-on the card and back to To do. Boss also gets `mention` and `reply` on its own cards. Boss does not plan work. The PM does.
+on the card and back to To do. Boss also gets `mention` and `reply` on its own cards, and the GitHub events
+(`merged_staging` needs nothing from Boss, `merged_production` means Boss moves the card to Done as it publishes,
+and `pipeline_passed` on a card in Verify is a review, as above). Boss hears `pipeline_failed` only as the card's
+assignee or creator, and then it is that owner's fix. Boss does not plan work. The PM does.
 
 **How a worker is woken (for Boss).** When the PM gives a worker work and that worker is not running, she writes a
 comment on the card that starts with `WAKE <worker key>: <card id>` and names `@{{people.boss}}`. Boss's channel gets

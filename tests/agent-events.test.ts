@@ -6,9 +6,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   AgentEventHub, audienceOfEvent, cleanEventText, deliverableTo, emitAgentEventWith, emitInBackground,
-  frameOfEvent, parseLastEventId, replyRecipients, stillMember
+  crewPeopleFrom, emitGithubEventWith, frameOfEvent, GITHUB_EVENT_KINDS, githubAudience, parseLastEventId, replyRecipients, stillMember
 } from '../server/utils/agentEvents'
-import type { AgentEventInput, AgentEventRecord, AudienceLookups, CloseReason, Membership, StreamKey, Verify } from '../server/utils/agentEvents'
+import type { AgentEventInput, AgentEventRecord, AudienceLookups, CloseReason, GithubEventKind, GithubLookups, Membership, StreamKey, Verify } from '../server/utils/agentEvents'
 
 const DAY = 24 * 60 * 60_000
 const BASE = 1_000_000
@@ -76,7 +76,7 @@ function open(hub: AgentEventHub, key: StreamKey, lastEventId?: number, membersh
 function kept(over: Partial<Omit<AgentEventRecord, 'id' | 'at'>> = {}): Omit<AgentEventRecord, 'id' | 'at'> {
   return {
     kind: 'task_moved', board: 'board-1', task: 'task-1', from: 'Sam', origin: null, title: 'Card',
-    needsFeedbackFromMe: false, assignedToMe: false, audience: 'staff', teamId: null, customerId: null, ...over
+    ref: null, needsFeedbackFromMe: false, assignedToMe: false, isPm: false, isBoss: false, audience: 'staff', teamId: null, customerId: null, ...over
   }
 }
 
@@ -231,7 +231,7 @@ test('the frame carries ids, the flags and the cut title, and no other field', (
   assert.ok(frame.startsWith('id: 7\nevent: task_created\ndata: '))
   assert.ok(frame.endsWith('\n\n'))
   const data = JSON.parse(frame.split('\n')[2]!.slice('data: '.length))
-  assert.deepEqual(Object.keys(data), ['kind', 'task', 'board', 'from', 'origin', 'title', 'needs_feedback_from_me', 'assigned_to_me'])
+  assert.deepEqual(Object.keys(data), ['kind', 'task', 'board', 'from', 'origin', 'title', 'ref', 'needs_feedback_from_me', 'assigned_to_me', 'is_pm', 'is_boss'])
   assert.equal(data.origin, 'agent')
   assert.equal(data.assigned_to_me, true)
 })
@@ -245,6 +245,177 @@ test('assigned_to_me is true only when the card is assigned to this user at emit
   assert.deepEqual(flags, ['true', 'false'])
 })
 
+// ── GitHub events: who hears them ─────────────────────────────────────
+
+/** The data of each frame a connection was sent, parsed. */
+function framesOf(connection: FakeConnection): Record<string, unknown>[] {
+  return connection.text().split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice('data: '.length)))
+}
+
+const crewBoard = { id: 'board-c', userId: 'pm-user', teamId: 'team-c', customerId: null }
+const crewMembers = { 'pm-user': ['team-c'], 'boss-user': ['team-c'], 'w1-user': ['team-c'], 'w2-user': ['team-c'] }
+const crewPeople = [
+  { userId: 'pm-user', key: 'pm' },
+  { userId: 'boss-user', key: 'boss' },
+  { userId: 'w1-user', key: 'w1' },
+  { userId: 'w2-user', key: 'w2' }
+]
+
+function githubLookups(members: Record<string, string[]>, people: { userId: string, key: string }[], contacts: Record<string, string[]> = {}): GithubLookups {
+  return { ...lookups(members, contacts), crewPeople: async () => people }
+}
+
+/** A stream for each of the users, all team-pinned to the team, and their connections by user. */
+function streamsFor(hub: AgentEventHub, users: string[], teamId: string) {
+  return Object.fromEntries(users.map(user => [user, open(hub, key(`k-${user}`, user, teamId), undefined, { teamIds: [teamId], customerIds: [] }).connection]))
+}
+
+test('GitHub audience: owners and the pm hear all four; the boss the merges and a passed pipeline in Verify only', () => {
+  const owner = { owner: true, pm: false, boss: false }
+  const pm = { owner: false, pm: true, boss: false }
+  const boss = { owner: false, pm: false, boss: true }
+  const nobody = { owner: false, pm: false, boss: false }
+  for (const kind of GITHUB_EVENT_KINDS) {
+    assert.equal(githubAudience(kind, owner, false), true)
+    assert.equal(githubAudience(kind, pm, false), true)
+    assert.equal(githubAudience(kind, nobody, true), false)
+  }
+  assert.equal(githubAudience('pipeline_failed', boss, true), false)
+  assert.equal(githubAudience('pipeline_passed', boss, true), true)
+  assert.equal(githubAudience('pipeline_passed', boss, false), false)
+  assert.equal(githubAudience('merged_staging', boss, false), true)
+  assert.equal(githubAudience('merged_production', boss, false), true)
+})
+
+test('a GitHub change reaches the owners, the crew pm and boss by their rule, and no other crew member', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user', 'boss-user', 'w1-user', 'w2-user'], 'team-c')
+  const crew = githubLookups(crewMembers, crewPeople)
+  const task = { id: 'T1', title: 'Fix login', assigneeId: 'w1-user', createdBy: 'pm-user', column: 'Verify' }
+  assert.equal(await emitGithubEventWith(hub, crew, { kind: 'pipeline_failed', board: crewBoard, task, ref: '#12 feature/login' }), 2)
+  assert.equal(await emitGithubEventWith(hub, crew, { kind: 'merged_staging', board: crewBoard, task, ref: '#12 feature/login' }), 3)
+  const kinds = (user: string) => framesOf(streams[user]!).map(data => data.kind)
+  assert.deepEqual(kinds('pm-user'), ['pipeline_failed', 'merged_staging'])
+  assert.deepEqual(kinds('w1-user'), ['pipeline_failed', 'merged_staging'], 'the assignee hears all four')
+  assert.deepEqual(kinds('boss-user'), ['merged_staging'], 'Boss never hears a failed pipeline')
+  assert.deepEqual(kinds('w2-user'), [], 'a worker who is not on the card hears nothing')
+})
+
+test('the frame tells the client who the recipient is: is_pm, is_boss and assigned_to_me, and the ref', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user', 'boss-user', 'w1-user'], 'team-c')
+  const task = { id: 'T2', title: 'Ship it', assigneeId: 'w1-user', createdBy: 'pm-user', column: 'Verify' }
+  await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'pipeline_passed', board: crewBoard, task, ref: '#7' })
+  const flags = (user: string) => framesOf(streams[user]!).map(data => [data.is_pm, data.is_boss, data.assigned_to_me, data.ref, data.origin])
+  assert.deepEqual(flags('pm-user'), [[true, false, false, '#7', 'github']])
+  assert.deepEqual(flags('boss-user'), [[false, true, false, '#7', 'github']])
+  assert.deepEqual(flags('w1-user'), [[false, false, true, '#7', 'github']])
+})
+
+test('pipeline_passed reaches Boss only while the card is in Verify', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['boss-user', 'pm-user'], 'team-c')
+  const task = { id: 'T3', title: 'Not yet', assigneeId: null, createdBy: 'pm-user', column: 'In progress' }
+  assert.equal(await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'pipeline_passed', board: crewBoard, task }), 1)
+  assert.deepEqual(framesOf(streams['boss-user']!), [], 'Boss gets nothing while the card is not in Verify')
+  assert.equal(await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'merged_production', board: crewBoard, task }), 2)
+  assert.deepEqual(framesOf(streams['boss-user']!).map(data => data.kind), ['merged_production'])
+})
+
+test('a team that is not a crew: its owners and assignee only, and nobody else on the team', async () => {
+  const { hub } = makeHub()
+  const board = { id: 'board-d', userId: 'owner-user', teamId: 'team-d', customerId: null }
+  const streams = streamsFor(hub, ['owner-user', 'w1-user', 'other-user'], 'team-d')
+  const members = { 'owner-user': ['team-d'], 'w1-user': ['team-d'], 'other-user': ['team-d'] }
+  const task = { id: 'T4', title: 'Plain team', assigneeId: 'w1-user', createdBy: 'owner-user', column: 'Verify' }
+  assert.equal(await emitGithubEventWith(hub, githubLookups(members, []), { kind: 'merged_staging', board, task }), 2)
+  assert.deepEqual(framesOf(streams['other-user']!), [])
+  assert.deepEqual(framesOf(streams['w1-user']!).map(data => data.kind), ['merged_staging'])
+})
+
+test('a customer never hears a GitHub change, even on a customer-visible card they are on', async () => {
+  const { hub } = makeHub()
+  const board = { id: 'board-e', userId: 'pm-user', teamId: 'team-c', customerId: 'acme' }
+  const contact = open(hub, key('k-contact', 'cust-user', null), undefined, { teamIds: [], customerIds: ['acme'] }).connection
+  const task = { id: 'T5', title: 'For the customer', assigneeId: 'cust-user', createdBy: 'pm-user', column: 'Verify' }
+  const kept = await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople, { 'cust-user': ['acme'] }), { kind: 'merged_production', board, task })
+  assert.equal(kept, 0)
+  assert.deepEqual(framesOf(contact), [])
+})
+
+test('a GitHub title is cut to 120 characters and a ref to 60, both stripped of control characters; no line can break out', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user'], 'team-c')
+  const hostile = `x\nevent: evil\r\ndata: {}\u2028${'y'.repeat(300)}`
+  const task = { id: 'T6', title: hostile, assigneeId: null, createdBy: 'pm-user', column: 'Verify' }
+  await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'pipeline_failed', board: crewBoard, task, ref: `#9 ${'z'.repeat(300)}\n\u0007` })
+  const [data] = framesOf(streams['pm-user']!)
+  assert.equal((data!.title as string).length, 120)
+  assert.equal((data!.ref as string).length, 60)
+  assert.equal(data!.from, null, 'no name of a person on a GitHub event: nothing from GitHub is a person')
+  const text = streams['pm-user']!.text()
+  assert.ok(!/\nevent: evil/.test(text), 'the title cannot start a frame')
+  // eslint-disable-next-line no-control-regex
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f\u2028]/.test(text.replace(/\n/g, '')), 'no control characters or separators reach the stream')
+})
+
+test('a core event never carries a ref, and a customer-audience record never does', async () => {
+  const { hub } = makeHub()
+  const contact = open(hub, key('k-cust', 'cust-user', null), undefined, { teamIds: [], customerIds: ['acme'] }).connection
+  const input = { ...eventFor({ kind: 'reply', board: customerBoard, customerVisible: true, task: { id: 'task-c', title: 'Visible', assigneeId: null } }), ref: '#5 leaked' } as AgentEventInput
+  assert.equal(await emitAgentEventWith(hub, lookups({}, { 'cust-user': ['acme'] }), 'cust-user', input), true)
+  const [data] = framesOf(contact)
+  assert.equal(data!.kind, 'reply')
+  assert.equal(data!.ref, null)
+})
+
+test('an unknown kind is refused: no GitHub event goes out, and no frame names one', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user'], 'team-c')
+  const bad = 'pipeline_failed\nevent: evil' as GithubEventKind
+  const task = { id: 'T7', title: 'x', assigneeId: null, createdBy: 'pm-user', column: 'Verify' }
+  assert.equal(await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: bad, board: crewBoard, task }), 0)
+  assert.equal(streams['pm-user']!.text(), '')
+  assert.throws(() => frameOfEvent({ ...kept({ kind: bad as never }), id: 1, at: 0 }))
+  hub.publish('pm-user', { ...kept({ kind: bad as never, teamId: 'team-c', audience: 'staff' }) })
+  assert.equal(streams['pm-user']!.text(), '')
+})
+
+test('Boss as the card assignee hears pipeline_failed like any owner; Boss as a bystander does not', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['boss-user', 'w2-user'], 'team-c')
+  const task = { id: 'T8', title: 'Boss owns it', assigneeId: 'boss-user', createdBy: 'pm-user', column: 'Verify' }
+  await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'pipeline_failed', board: crewBoard, task })
+  assert.deepEqual(framesOf(streams['boss-user']!).map(data => data.kind), ['pipeline_failed'])
+  assert.deepEqual(framesOf(streams['w2-user']!), [])
+  const bystander = { ...task, id: 'T9', assigneeId: 'w1-user', createdBy: 'pm-user' }
+  await emitGithubEventWith(hub, githubLookups(crewMembers, crewPeople), { kind: 'pipeline_failed', board: crewBoard, task: bystander })
+  assert.deepEqual(framesOf(streams['boss-user']!).map(data => data.kind), ['pipeline_failed'], 'a bystander Boss gets no pipeline_failed')
+})
+
+test('a team with two crew rows is no crew, and an account outside the crew is skipped', () => {
+  assert.deepEqual(crewPeopleFrom([{ id: 'c1', slug: 'acme' }, { id: 'c2', slug: 'other' }], []), [])
+  const accounts = [
+    { id: 'u1', email: 'acme-pm@crew.invalid', crewId: 'c1' },
+    { id: 'u2', email: 'stranger@crew.invalid', crewId: 'c1' },
+    { id: 'u3', email: 'acme-w1@example.com', crewId: 'c1' },
+    { id: 'u4', email: 'acme-boss@crew.invalid', crewId: 'c2' }
+  ]
+  assert.deepEqual(crewPeopleFrom([{ id: 'c1', slug: 'acme' }], accounts), [{ userId: 'u1', key: 'pm' }])
+})
+
+test('no team lookup is made while nobody is watched', async () => {
+  const { hub } = makeHub()
+  let asked = 0
+  const crew: GithubLookups = githubLookups(crewMembers, crewPeople)
+  crew.crewPeople = async () => {
+    asked++
+    return crewPeople
+  }
+  const task = { id: 'T10', title: 'Quiet', assigneeId: 'w1-user', createdBy: 'pm-user', column: 'Verify' }
+  assert.equal(await emitGithubEventWith(hub, crew, { kind: 'merged_staging', board: crewBoard, task }), 0)
+  assert.equal(asked, 0)
+})
 test('a Last-Event-ID is read only when it is a plain number', () => {
   assert.equal(parseLastEventId('12'), 12)
   assert.equal(parseLastEventId(' 0 '), 0)
