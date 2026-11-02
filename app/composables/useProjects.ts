@@ -56,6 +56,8 @@ export interface ProjectColumn {
 
 /** Where a delete came from, so the trash can name it. */
 export type DeletionSource = 'ui' | 'mcp' | 'ai'
+// Where an activity line came from; GitHub for the card syncer.
+export type ActivitySource = 'ui' | 'mcp' | 'ai' | 'github'
 
 export interface ProjectTask {
   id: string
@@ -116,9 +118,9 @@ export interface CommentReplyPreview {
 // One line of a task's log: made, finished, moved, rescheduled, given to someone.
 export interface TaskActivityItem {
   id: string
-  kind: 'created' | 'completed' | 'reopened' | 'moved' | 'assigned' | 'unassigned' | 'due' | 'start' | 'renamed' | 'visibility'
+  kind: 'created' | 'completed' | 'reopened' | 'moved' | 'assigned' | 'unassigned' | 'due' | 'start' | 'renamed' | 'visibility' | 'label'
   detail: Record<string, string | null>
-  via: DeletionSource
+  via: ActivitySource
   actorId: string | null
   actorName: string | null
   createdAt: number

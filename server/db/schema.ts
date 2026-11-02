@@ -194,6 +194,9 @@ export type Visibility = typeof VISIBILITIES[number]
 // the user's own tidying apart from an agent's, and so a runaway MCP key's work
 // can be picked out and restored in one go.
 export const DELETION_SOURCES = ['ui', 'mcp', 'ai'] as const
+// Where an activity line came from: the same three, and GitHub for the card syncer's lines.
+export const ACTIVITY_SOURCES = ['ui', 'mcp', 'ai', 'github'] as const
+export type ActivitySource = typeof ACTIVITY_SOURCES[number]
 export type DeletionSource = typeof DELETION_SOURCES[number]
 
 // How long a trashed column or task is kept before the purge job removes it.
@@ -338,7 +341,7 @@ export const projectTasks = pgTable(
 // finished, moved, rescheduled, given to someone. `detail` holds the words the
 // entry needs (names, not ids) so it still reads right after a column or a
 // person is gone.
-export const TASK_ACTIVITY_KINDS = ['created', 'completed', 'reopened', 'moved', 'assigned', 'unassigned', 'due', 'start', 'renamed', 'visibility'] as const
+export const TASK_ACTIVITY_KINDS = ['created', 'completed', 'reopened', 'moved', 'assigned', 'unassigned', 'due', 'start', 'renamed', 'visibility', 'label'] as const
 export type TaskActivityKind = typeof TASK_ACTIVITY_KINDS[number]
 
 export const taskActivity = pgTable(
@@ -349,7 +352,7 @@ export const taskActivity = pgTable(
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
     // How it was done: the app, an agent over MCP, or the AI assistant.
-    via: text('via').$type<DeletionSource>().notNull().default('ui'),
+    via: text('via').$type<ActivitySource>().notNull().default('ui'),
     kind: text('kind').$type<TaskActivityKind>().notNull(),
     detail: json('detail').$type<Record<string, string | null>>().notNull().default({}),
     createdAt: bigint('created_at', { mode: 'number' }).notNull()
@@ -769,12 +772,63 @@ export const projectGithubRepos = pgTable(
     owner: text('owner').notNull(),
     repo: text('repo').notNull(),
     visibility: text('visibility').$type<Visibility>().notNull().default('internal'),
+    // Issue sync: GitHub issues become cards in this project. Off until the owner
+    // turns it on. The column and visibility are what the new cards get.
+    syncEnabled: boolean('sync_enabled').notNull().default(false),
+    syncColumn: text('sync_column').notNull().default('Backlog'),
+    syncVisibility: text('sync_visibility').$type<Visibility>().notNull().default('internal'),
+    // The GitHub logins whose issues and comments are accepted, lower-cased.
+    acceptedLogins: json('accepted_logins').$type<string[]>().notNull().default([]),
+    // Issues from anyone else are counted, and the last one is kept so the owner
+    // can see why a card did not appear.
+    ignoredCount: integer('ignored_count').notNull().default(0),
+    lastIgnored: json('last_ignored').$type<{ login: string, number: number, title: string, at: number } | null>(),
+    // Comma separated branch names. Production empty means the default branch.
+    stagingBranches: text('staging_branches').notNull().default(''),
+    productionBranches: text('production_branches').notNull().default(''),
+    // Off: closing the GitHub issue only tags the card 'issue closed'.
+    completeOnClose: boolean('complete_on_close').notNull().default(false),
     createdAt: bigint('created_at', { mode: 'number' }).notNull()
   },
   table => [uniqueIndex('project_github_repos_project_repo_idx').on(table.projectId, table.owner, table.repo)]
 )
 
 export type ProjectGithubRepo = typeof projectGithubRepos.$inferSelect
+
+// Who changed a linked repository's settings, and what from what to what. The
+// settings page reads the latest rows, so the owner can see who turned sync on.
+export const projectGithubAudit = pgTable(
+  'project_github_audit',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    // owner/repo, kept as text so the line still reads after the repository is unlinked.
+    repo: text('repo').notNull(),
+    // Field name -> the words before and after. Never a secret.
+    detail: json('detail').$type<Record<string, { from: string, to: string }>>().notNull().default({}),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [index('project_github_audit_project_created_idx').on(table.projectId, table.createdAt)]
+)
+
+export type ProjectGithubAudit = typeof projectGithubAudit.$inferSelect
+
+// Webhook deliveries already handled, by GitHub's X-GitHub-Delivery id, so a retry of
+// the same delivery is not handled twice. Kept a day and pruned by received_at.
+export const githubDeliveries = pgTable(
+  'github_deliveries',
+  {
+    id: text('id').primaryKey(),
+    event: text('event').notNull(),
+    owner: text('owner').notNull(),
+    repo: text('repo').notNull(),
+    receivedAt: bigint('received_at', { mode: 'number' }).notNull()
+  },
+  table => [index('github_deliveries_received_at_idx').on(table.receivedAt)]
+)
+
+export type GithubDelivery = typeof githubDeliveries.$inferSelect
 
 // Automation rules for a project. trigger, conditions and actions are JSON
 // documents whose shape is validated by the rule model, not by the database.

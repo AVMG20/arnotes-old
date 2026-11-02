@@ -3,7 +3,7 @@
 import { asc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db'
 import { projectColumns, taskActivity, user } from '../db/schema'
-import type { DeletionSource, ProjectTask, TaskActivityKind } from '../db/schema'
+import type { ActivitySource, ProjectTask, TaskActivityKind } from '../db/schema'
 
 export interface ActivityEntry {
   kind: TaskActivityKind
@@ -30,7 +30,7 @@ export async function logActivity(
   task: Pick<ProjectTask, 'id' | 'projectId'>,
   actorId: string | null,
   entries: ActivityEntry[],
-  via: DeletionSource = 'ui'
+  via: ActivitySource = 'ui'
 ) {
   if (!entries.length) return
   const now = Date.now()
@@ -61,6 +61,7 @@ export function briefOf(entry: ActivityEntry): string {
     case 'start': return detail.to ? `Starts ${detail.to}` : 'Start date cleared'
     case 'renamed': return `Renamed to "${detail.to}"`
     case 'visibility': return `Made ${detail.to}`
+    case 'label': return detail.to ? `Added label ${detail.to}` : `Removed label ${detail.from}`
   }
 }
 
@@ -98,7 +99,7 @@ export interface ActivityRow {
   id: string
   kind: TaskActivityKind
   detail: Record<string, string | null>
-  via: DeletionSource
+  via: ActivitySource
   actorId: string | null
   actorName: string | null
   createdAt: number
