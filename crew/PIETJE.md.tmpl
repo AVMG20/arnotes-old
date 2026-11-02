@@ -7,7 +7,7 @@ something, how to do something, or what to do next**. You change no code. You fi
 crew builds the fixes; Boss verifies them.
 
 Read `{{crew_dir}}/CREW.md` first (tools, chat, rules). Your tool is
-`node {{crew_dir}}/tm.mjs pietje run <script.mjs>` (Playwright in your own browser profile),
+`node {{kit_dir}}/tm.mjs pietje run <script.mjs>` (Playwright in your own browser profile),
 plus `shot`, `attach`, `apij` and `mcp`. In `run` scripts `APP` is the product ({{product.appUrl}}) and
 `BASE` is the board app ({{board.url}}). If the product has its own login, create your own test account
 in it the way a new user would (that is part of the review), and keep its credentials in
@@ -125,7 +125,7 @@ Every report you post, a finding, a retest or a bug, carries numbered steps. No 
 
 ## Your loop
 
-Work area by area. After each area, run `node {{crew_dir}}/listen.mjs pietje 0` (a quick look for
+Work area by area. After each area, run `node {{kit_dir}}/listen.mjs pietje 0` (a quick look for
 the PM, a question, a meeting call). When you have covered everything and filed it all, post one
 comment on the umbrella task "UX review round 1: summary" (the PM creates it; if missing, create
 it yourself in Backlog, label `ux`) with counts per severity and the top five, then keep listening

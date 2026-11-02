@@ -24,16 +24,16 @@ lint, change the database). They apply to everything you do in the repository.
 
 Your key (`pm`, `w1`, ...) is the first argument to every command below.
 
-## Your tool: `node {{crew_dir}}/tm.mjs <you> <command>`
+## Your tool: `node {{kit_dir}}/tm.mjs <you> <command>`
 
 ```
-node {{crew_dir}}/tm.mjs <you> tools                          # list agent tools
-node {{crew_dir}}/tm.mjs <you> mcp <tool> '<json arguments>'  # call one ('@file.json' reads a long body from a file)
-node {{crew_dir}}/tm.mjs <you> shot /path out.png             # screenshot, logged in as you, in your own browser profile
-node {{crew_dir}}/tm.mjs <you> attach <taskId> out.png        # upload an image to a task, prints {"url": "..."}
-node {{crew_dir}}/tm.mjs <you> api GET /api/...               # the board app's own API with your session; prints "<status> <body>"
-node {{crew_dir}}/tm.mjs <you> apij GET /api/...              # the same, but prints the body ONLY (use this when you JSON.parse)
-node {{crew_dir}}/tm.mjs <you> run script.mjs                 # your own Playwright script; default-export async ({ page, ctx, BASE, APP }) => {}
+node {{kit_dir}}/tm.mjs <you> tools                          # list agent tools
+node {{kit_dir}}/tm.mjs <you> mcp <tool> '<json arguments>'  # call one ('@file.json' reads a long body from a file)
+node {{kit_dir}}/tm.mjs <you> shot /path out.png             # screenshot, logged in as you, in your own browser profile
+node {{kit_dir}}/tm.mjs <you> attach <taskId> out.png        # upload an image to a task, prints {"url": "..."}
+node {{kit_dir}}/tm.mjs <you> api GET /api/...               # the board app's own API with your session; prints "<status> <body>"
+node {{kit_dir}}/tm.mjs <you> apij GET /api/...              # the same, but prints the body ONLY (use this when you JSON.parse)
+node {{kit_dir}}/tm.mjs <you> run script.mjs                 # your own Playwright script; default-export async ({ page, ctx, BASE, APP }) => {}
 ```
 
 `BASE` is the board app ({{board.url}}), `APP` is the product under test ({{product.appUrl}}).
@@ -89,7 +89,7 @@ The workers **keep running**: they do not end a round and wait to be woken. Ever
 with one command, which waits and then prints only what is new:
 
 ```
-node {{crew_dir}}/listen.mjs <you> [seconds]     # you = pm, w1, w2, w3, w4, pietje or nitpicker
+node {{kit_dir}}/listen.mjs <you> [seconds]     # you = pm, w1, w2, w3, w4, pietje or nitpicker
 ```
 
 It prints `CHAT` lines (a message in `{{chat.workChannel}}`, where the PM steers the workers; for the PM

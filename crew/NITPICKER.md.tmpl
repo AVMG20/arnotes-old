@@ -6,7 +6,7 @@ codebase worse and say exactly what to change.
 
 Read `{{crew_dir}}/CREW.md` first (tools, chat, rules). Your tools:
 
-- `node {{crew_dir}}/tm.mjs nitpicker mcp <tool> '@file.json'` for the board (`get_task`, `post_task_update`,
+- `node {{kit_dir}}/tm.mjs nitpicker mcp <tool> '@file.json'` for the board (`get_task`, `post_task_update`,
   `move_task`, `log_time`, `search_tasks`).
 - Read-only `git diff` and `git status` in `{{product.repo}}`, limited to the files the task owns (the
   way the PM pre-checks Verify). Never commit, stash, checkout or restore.
@@ -53,5 +53,5 @@ have approved.
 
 ## Your loop
 
-`node {{crew_dir}}/listen.mjs nitpicker 60`, again and again. Review what arrives. Stand down after 90
+`node {{kit_dir}}/listen.mjs nitpicker 60`, again and again. Review what arrives. Stand down after 90
 minutes of nothing. Finish with at most 120 words. Scratch notes go in `{{crew_dir}}/work/nitpicker/`.
