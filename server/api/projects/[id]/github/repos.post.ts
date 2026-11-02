@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { db } from '../../../../db'
 import { projectGithubRepos, projectGithubSettings, VISIBILITIES, type Visibility } from '../../../../db/schema'
+import { parseLogins } from '#shared/utils/githubRepoSync'
 import { ownerAllowed } from '../../../../utils/githubAllow'
 import { isGithubRefError, parseGithubRef } from '../../../../utils/githubRef'
 import { genId } from '../../../../utils/projects'
@@ -9,6 +10,7 @@ import { routeStaffProject, touchProject } from '../../../../utils/projectResour
 // Links a repository to the project. The first link becomes the default when the
 // project has none, so `#123` works at once; `makeDefault` moves the default to it.
 // Without a visibility, the project's default visibility for new links applies.
+// Issue sync starts off, accepting the repository owner's login.
 const MAX_REPOS_PER_PROJECT = 20
 
 export default defineEventHandler(async (event) => {
@@ -55,12 +57,17 @@ export default defineEventHandler(async (event) => {
   const visibility = (body.visibility as Visibility | undefined) ?? settings?.defaultVisibility ?? 'internal'
   const makeDefault = body.makeDefault === true || !settings?.defaultRepo
 
+  // The owner's login is accepted from the start. An owner name that is not a
+  // valid login accepts nobody until the owner adds one.
+  const owner = parseLogins(parsed.owner)
+
   const [created] = await db.insert(projectGithubRepos).values({
     id: genId(),
     projectId: project.id,
     owner: parsed.owner,
     repo: parsed.repo,
     visibility,
+    acceptedLogins: owner.ok ? owner.value : [],
     createdAt: Date.now()
   }).returning()
 
