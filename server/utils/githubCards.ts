@@ -12,6 +12,10 @@ import { ownerAllowed } from './githubAllow'
 // The only events the syncer reads. Other events keep their own handling in the webhook.
 export const SYNCED_EVENTS = ['issues', 'issue_comment'] as const
 
+// The events the tag module reads (GH3): pipeline and merge tags. They go through the same queue and the same
+// processGithubDelivery; the work is done by tagWork (githubTags.ts), so this file does not read the database.
+export const TAG_EVENTS = ['pull_request', 'check_run', 'workflow_run'] as const
+
 // A comment the crew posted under the owner's account starts with this, and is not a request.
 export const ECHO_PREFIX = 'Claude (Taskmanager crew session)'
 
@@ -179,6 +183,8 @@ export interface DeliveryDeps {
   markerKey?: string
   /** The attempt's signal: once it aborts, no further store call starts, and a call still waiting is left behind. */
   signal?: AbortSignal
+  /** Applies a tag event (pull_request, check_run, workflow_run). Absent: such events are ignored. See githubTags.ts. */
+  tagWork?: (job: DeliveryJob, signal?: AbortSignal) => Promise<Outcome>
 }
 
 // ─── Signature and body ──────────────────────────────────────────────────────
@@ -360,6 +366,7 @@ function derivedDeliveryId(job: DeliveryJob, number: number, action: string): st
  */
 export async function processGithubDelivery(job: DeliveryJob, deps: DeliveryDeps): Promise<Outcome> {
   const { event, payload, receivedAt: now } = job
+  if ((TAG_EVENTS as readonly string[]).includes(event)) return deps.tagWork ? deps.tagWork(job, deps.signal) : 'ignored'
   const store = guardStore(deps.store, deps.signal)
   if (!(SYNCED_EVENTS as readonly string[]).includes(event)) return 'ignored'
 
