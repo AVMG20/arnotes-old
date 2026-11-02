@@ -218,12 +218,16 @@ trace from `claude --debug`.
 ## Commands
 
     crew <who> <command ...>      board tools as one person (tm.mjs)
+    crew <who> update <taskId> <body.md|->   an update from a Markdown file or stdin (the default for long text)
+    crew <who> attach <taskId> <image>       upload an image to a task
     crew listen <who> [seconds]   wait for new messages for a person (listen.mjs)
     crew watch                    the Boss's watch of the board (watch.mjs)
     crew init                     check the machine, render the documents (init.mjs)
     crew setup                    make the crew by hand (setup.mjs)
 
 The old file names (`tm.mjs`, `listen.mjs`, ...) still work.
+
+Post long text from a file, not inline JSON: write the Markdown to a file and run `crew w1 update <taskId> body.md`. An update is internal (staff only) unless `--customer` is given; a customer contact's update is customer-visible whatever the flag says, because the server decides. The board prints `posted as internal` or `posted as customer`. An empty body, a file over 200 KB, invalid UTF-8 or NUL bytes exit 65; a missing file, a symlink or a non-file exits 66; an unknown flag exits 64; a board that cannot be reached exits 69 (try again). The one-line form is `crew w1 mcp post_task_update`, with a JSON object holding the id and the body.
 
 ## Updating
 
