@@ -32,6 +32,7 @@
         "nodemailer": "10.0.16",
         "nuxt": "^4.4.6",
         "postgres": "^3.4.9",
+        "rabbitmq-client": "5.1.0",
         "sortablejs": "^1.15.7",
         "tailwindcss": "^4.3.0",
         "turndown": "^7.2.4",
@@ -2250,6 +2251,8 @@
     "quansync": ["quansync@0.2.11", "", {}, "sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA=="],
 
     "queue-microtask": ["queue-microtask@1.2.3", "", {}, "sha512-NuaNSa6flKT5JaSYQzJok04JzTL1CA6aGhv5rfLW3PgqA+M2ChpZQnAC8h8i4ZFkBS8X5RqkDBHA7r4hej3K9A=="],
+
+    "rabbitmq-client": ["rabbitmq-client@5.1.0", "", {}, "sha512-tTs9v/3nx9GTduRE1IqY4FviCYS9SS7kC3XaYyZ74FMEKy6QdueWGhnShCRCu+g0DzExPtPluMn5pmPwuY7LPQ=="],
 
     "radix3": ["radix3@1.1.2", "", {}, "sha512-b484I/7b8rDEdSDKckSSBA8knMpcdsXudlE/LNL639wFoHKwLbEkQFZHWEYwDC0wa0FKUcCY+GAF73Z7wxNVFA=="],
 

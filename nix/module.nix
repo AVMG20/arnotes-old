@@ -33,9 +33,21 @@ let
     if [ ! -s "$key_file" ]; then
       ${pkgs.openssl}/bin/openssl rand -hex 32 > "$key_file"
     fi
+    ${lib.optionalString cfg.queue.enable ''
+      rabbit_file="$state_dir/data/.rabbitmq-password"
+      if [ ! -s "$rabbit_file" ]; then
+        ${pkgs.openssl}/bin/openssl rand -hex 24 > "$rabbit_file"
+      fi
+    ''}
     : > "$env_file"
     ${lib.optionalString (cfg.betterAuth.secretFile == null) ''
       printf 'BETTER_AUTH_SECRET=%s\n' "$(tr -d '\n' < "$secret_file")" >> "$env_file"
+    ''}
+    ${lib.optionalString (cfg.queue.enable && cfg.queue.urlFile == null) ''
+      printf 'RABBITMQ_URL=amqp://arnotes:%s@127.0.0.1:5672/arnotes\n' "$(tr -d '\n' < "$state_dir/data/.rabbitmq-password")" >> "$env_file"
+    ''}
+    ${lib.optionalString (cfg.queue.urlFile != null) ''
+      printf 'RABBITMQ_URL=%s\n' "$(tr -d '\n' < "${toString cfg.queue.urlFile}")" >> "$env_file"
     ''}
     ${lib.optionalString (cfg.secrets.keyFile == null) ''
       printf 'SECRETS_ENCRYPTION_KEY=%s\n' "$(tr -d '\n' < "$key_file")" >> "$env_file"
@@ -57,6 +69,26 @@ let
     exec "$@"
   '';
 
+  # The broker user and vhost for the queue, as an Erlang script for rabbitmqctl eval_file. The unit replaces
+  # @CREDENTIAL@ with the credential path at start, and the broker reads the password itself, so no command
+  # line carries it. The script holds no secret.
+  userScript = pkgs.writeText "arnotes-broker-user.erl" ''
+    {ok, Raw} = file:read_file("@CREDENTIAL@"),
+    Pw = list_to_binary(string:trim(binary_to_list(Raw))),
+    User = <<"arnotes">>,
+    Vhost = <<"arnotes">>,
+    Acting = <<"arnotes-setup">>,
+    case rabbit_auth_backend_internal:exists(User) of
+        true -> ok = rabbit_auth_backend_internal:change_password(User, Pw, Acting);
+        false -> ok = rabbit_auth_backend_internal:add_user(User, Pw, Acting)
+    end,
+    case rabbit_vhost:exists(Vhost) of
+        true -> ok;
+        false -> ok = rabbit_vhost:add(Vhost, Acting)
+    end,
+    ok = rabbit_auth_backend_internal:set_permissions(User, Vhost, <<".*">>, <<".*">>, <<".*">>, Acting),
+    io:format("arnotes broker user ready~n").
+  '';
   appEnvironment = {
     DATABASE_URL = databaseUrl;
     BETTER_AUTH_URL = cfg.betterAuth.url;
@@ -360,6 +392,29 @@ in
       };
     };
 
+    queue = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Run RabbitMQ on this host for the GitHub delivery queue. RABBITMQ_URL then points at a local user and vhost,
+          both named arnotes, whose password is generated into the state directory on first start. The user is created
+          by arnotes-rabbitmq-setup, which runs whenever this is true, also when urlFile is set (then urlFile's URL wins).
+        '';
+      };
+      urlFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "/run/secrets/arnotes-rabbitmq-url";
+        description = ''
+          Absolute runtime path of a file holding the RABBITMQ_URL of an external broker, including its password. It is
+          read at service start into the environment file in the state directory, so the password never reaches the Nix
+          store. It must not be a store path: a path literal would be copied into the store with its contents. See the
+          README, "GitHub deliveries and the queue", for creating the file.
+        '';
+      };
+    };
+
     environment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
@@ -385,6 +440,17 @@ in
           ensureDBOwnership = true;
         }
       ];
+    };
+
+    assertions = [
+      {
+        assertion = cfg.queue.urlFile == null || (lib.hasPrefix "/" cfg.queue.urlFile && !lib.hasPrefix "/nix/store" cfg.queue.urlFile);
+        message = "services.arnotes.queue.urlFile must be an absolute runtime path, never a store path: a store path would copy the broker URL and its password into the Nix store.";
+      }
+    ];
+    services.rabbitmq = lib.mkIf cfg.queue.enable {
+      enable = true;
+      listenAddress = "127.0.0.1";
     };
 
     users.users.arnotes = {
@@ -442,6 +508,9 @@ in
         "arnotes-secret.service"
         "postgresql.service"
         "network.target"
+      ] ++ lib.optionals cfg.queue.enable [
+        "arnotes-rabbitmq-setup.service"
+        "rabbitmq.service"
       ];
       requires = [
         "arnotes-db-setup.service"
@@ -465,8 +534,39 @@ in
         ReadWritePaths = cfg.stateDir;
       };
       environment = appEnvironment;
-      serviceConfig.EnvironmentFile = lib.mkIf (cfg.betterAuth.secretFile == null || cfg.secrets.keyFile == null) "-${cfg.stateDir}/env";
+      # Always read: the secret script writes this file on every start (it may hold only the generated keys).
+      serviceConfig.EnvironmentFile = "-${cfg.stateDir}/env";
     };
+
+    # The local broker's arnotes user and vhost. The password is read by the broker itself, from the credential
+    # file, through rabbitmqctl eval_file: the command line carries only the path of the script, never the password.
+    # The script lives in the unit's RuntimeDirectory (0700) and names the credential path, which is not a secret.
+    systemd.services.arnotes-rabbitmq-setup = lib.mkIf cfg.queue.enable {
+      description = "Taskmanager RabbitMQ user and vhost (runs whenever queue.enable is set, also with queue.urlFile)";
+      after = [ "rabbitmq.service" "arnotes-secret.service" ];
+      requires = [ "rabbitmq.service" "arnotes-secret.service" ];
+      before = [ "arnotes.service" ];
+      requiredBy = [ "arnotes.service" ];
+      environment.HOME = "/var/lib/rabbitmq";
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        User = "rabbitmq";
+        Group = "rabbitmq";
+        RuntimeDirectory = "arnotes-rabbitmq";
+        RuntimeDirectoryMode = "0700";
+        LoadCredential = "rabbitmq-password:${cfg.stateDir}/data/.rabbitmq-password";
+      };
+      script = ''
+        set -eu
+        ctl=${pkgs.rabbitmq-server}/bin/rabbitmqctl
+        ${pkgs.gnused}/bin/sed "s|@CREDENTIAL@|$CREDENTIALS_DIRECTORY/rabbitmq-password|" ${userScript} > "$RUNTIME_DIRECTORY/arnotes-user.erl"
+        $ctl await_startup
+        $ctl delete_user guest >/dev/null 2>&1 || true
+        $ctl eval_file "$RUNTIME_DIRECTORY/arnotes-user.erl"
+      '';
+    };
+
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
   };
