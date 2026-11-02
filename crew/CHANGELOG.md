@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-02: an update from a file, no JSON escaping (GH #40)
+
+- **`crew <key> update <taskId> <file|->`** (`tm.mjs`). Posts a Markdown file, or stdin for `-`, as one task update through `post_task_update`. A staff update is internal unless `--customer` is given. An empty body is refused (exit 65), a file over 200 KB is refused (exit 65) and a missing file gives a plain error (exit 66). Unknown flags and extra arguments are usage errors (64), and so is a terminal on stdin. Invalid UTF-8 or NUL bytes are refused (65), a symlink or a non-file is refused (66), and an unreachable board exits 69. The file is read in chunks and stops at the limit. It prints `posted as internal` or `posted as customer`; a customer contact is always customer-visible. It runs without starting a browser.
+- **`crew <key> attach`** is unchanged in behaviour. A missing image is refused before a browser starts (exit 66).
+- **`CREW.md.tmpl`, `PROMPTS.md.tmpl`, `README.md`.** The file form is the default for any update longer than one line, and the inline JSON form is the exception. The tool section now runs `crew.mjs` through `{{kit_dir}}`.
+- **`tests/crew-update.test.ts`.** Runs the subcommand against a fake local board: bodies from a file and from stdin come through byte-exact, the visibility flags, the refusals and exit codes, and a check that the documents show the file form.
+
 ## 2026-11-02: GitHub events for the crew (GH4)
 
 - **`server/utils/agentEvents.ts`: four GitHub kinds.** `pipeline_failed`, `pipeline_passed`, `merged_staging` and
