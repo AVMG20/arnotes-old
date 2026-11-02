@@ -9,6 +9,7 @@ import type { Action, TaskSnapshot, TriggerKind } from './ruleSpec'
 import { columnTasksOrdered, genId, positionBetween, subtasksOrdered } from './projects'
 import { changesToTask, logActivity, inboxBriefs } from './taskActivity'
 import { notifyAssigned, notifyComment, notifyTaskChange } from './notifyEvents'
+import { announceTaskCreated } from './agentEvents'
 import { requireAssignable } from './people'
 import { publish, workspaceTopic } from './realtime'
 
@@ -240,6 +241,7 @@ export async function runAction(
         updatedAt: now
       }).returning()
       await logActivity(subtask!, ruleActorId(), [{ kind: 'created', detail: { rule: rule.name } }])
+      announceTaskCreated(project, subtask!, ruleActorId(), 'rule')
       await touchBoard(project)
       await followUp({ ...base, taskId: subtask!.id, type: 'task_added' })
       return
