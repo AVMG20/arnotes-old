@@ -22,6 +22,11 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
     note: 'A task can link GitHub issues, pull requests, branches and workflow runs. Each link shows what GitHub says now (state, pull requests, review and check status, branch position, run status), fetched on the server and cached, so the token never reaches you. Links follow the same audience rule as the task: a customer contact sees only the links marked for customers, and linking or unlinking is for the team.'
   },
   {
+    title: 'GitHub deliveries',
+    match: tool => /^(list_failed_deliveries|get_failed_delivery|retry_failed_delivery|discard_failed_delivery|github_queue_status)$/.test(tool.name),
+    note: 'GitHub changes reach Taskmanager as deliveries. One that cannot be applied after its attempts is kept for the PM, any team member may list and read it; retry it once when its cause is gone, or discard it with a reason, is for the crew\'s pm key only. You see only the deliveries of the repositories linked to projects your team works on; any other repository is refused. A retry sends the stored payload back once. Reading one delivery and each retry or discard are written to the agent audit with their outcome; list and status are not. The payload itself is never returned in full.'
+  },
+  {
     title: 'Rules',
     match: tool => /_rules?$|_rule_runs$/.test(tool.name),
     note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired.'

@@ -72,6 +72,9 @@ function secretsSummary(value: Loose): string {
 // What a person reads for each tool. Anything not listed falls back to the
 // tool's title. Secrets only ever name themselves and count: never a value.
 const SUMMARIES: Record<string, Summary> = {
+  get_failed_delivery: v => `Read GitHub delivery ${v.item?.id}`,
+  retry_failed_delivery: v => `Retry of GitHub delivery ${v.deliveryId}: ${v.message}`,
+  discard_failed_delivery: v => `Discard of GitHub delivery ${v.deliveryId}: ${v.message}`,
   create_board: v => `Created the board ${quote(v.name)}`,
   update_board: v => v.renamedFrom ? `Renamed the board to ${quote(v.name)}` : `Changed the board ${quote(v.name)}`,
   create_column: v => `Added the column ${quote(v.column?.name)}`,
