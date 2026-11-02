@@ -42,6 +42,7 @@
     "nodemailer": "10.0.16",
     "nuxt": "^4.4.6",
     "postgres": "^3.4.9",
+    "rabbitmq-client": "5.1.0",
     "sortablejs": "^1.15.7",
     "tailwindcss": "^4.3.0",
     "turndown": "^7.2.4",

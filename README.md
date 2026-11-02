@@ -138,6 +138,7 @@ Only expose the application through the reverse proxy. PostgreSQL is bound to `1
 | `GITHUB_TOKEN` | empty | Optional GitHub token for reading issues, pull requests and workflow runs; public repositories work without it, at GitHub's lower rate limit. Only ever sent to GitHub |
 | `GITHUB_WEBHOOK_SECRET` | empty | Secret GitHub signs webhook deliveries with, checked on `POST /api/github/webhook`. The receiver answers 503 until it is set |
 | `GITHUB_ALLOWED_OWNERS` | empty | Comma-separated GitHub owners and orgs that links may point at. Empty allows any owner the token can see; set it in production, since the token can read every repository it has access to |
+| `RABBITMQ_URL` | empty | Broker for the GitHub delivery queue, `amqp://user:password@host:5672/vhost`. In this change only the queue module reads it; the webhook starts using it with GH6b. Compose builds it from `RABBITMQ_PASSWORD` instead (required there). The server starts without it. See [GitHub deliveries and the queue](#github-deliveries-and-the-queue) |
 | `DUE_RULES_INTERVAL_MS` | `900000` | How often the due-date rules are checked, in milliseconds (15 minutes). Testing only: ignored when `NODE_ENV` is `production` |
 | `MAINTENANCE_MODE` | empty | Set to `1`, `true`, `yes` or `on` to put the app in maintenance mode: every request is answered 503 with `Retry-After` (a small page for the browser, JSON for `/api` and the agent endpoint), except `/api/health`. Due-date rules pause too |
 | `MAINTENANCE_FILE` | `maintenance.on` | A file whose existence turns maintenance mode on with no restart: `touch maintenance.on` before a deploy, `rm maintenance.on` after. Relative to the working directory |
@@ -292,6 +293,8 @@ Key options (`services.arnotes.*`):
 | `oidc.enable` | `false` | Enable your own OIDC server; set `name`, `discoveryUrl`, `clientId`, `clientSecret` |
 | `passkeys.enable` | `true` | Allow passkey sign-in |
 | `emailCode.enable` | `false` | Enable email-code sign-in; set `smtp.host`, `smtp.from` and, if needed, `smtp.port`/`secure`/`user`/`password` |
+| `queue.enable` | `false` | Run RabbitMQ on this host for the GitHub delivery queue and set `RABBITMQ_URL` to it. Its password is generated into the state directory and read by the broker, never on a command line. The user is created whenever this is set, also with `queue.urlFile` |
+| `queue.urlFile` | `null` | Absolute runtime path of a file holding the `RABBITMQ_URL` of an external broker. Read at service start into the environment file. Never a store path; see [GitHub deliveries and the queue](#github-deliveries-and-the-queue) |
 | `environment` | `{}` | Extra environment variables |
 | `openFirewall` | `false` | Open the app port in the firewall |
 
@@ -315,17 +318,18 @@ BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters \
 
 ### Development shell
 
-`nix develop` provides bun, node, PostgreSQL, and two helpers that replace `docker compose up -d postgres`:
+`nix develop` provides bun, node, PostgreSQL and RabbitMQ, and helpers that replace `docker compose up -d postgres` and the broker of the GitHub queue:
 
 ```bash
 nix develop
 db-start            # init and start a local PostgreSQL on port 5432
+mq-start            # start a local RabbitMQ on 127.0.0.1:5672 and print its RABBITMQ_URL
 bun install
 bun run db:push     # push server/db/schema.ts to PostgreSQL
 bun run dev         # run the dev server with hot reload
 ```
 
-`db-stop` stops the local PostgreSQL. Its data lives under `.nix-data/` in the repo.
+`db-stop` stops the local PostgreSQL. Its data lives under `.nix-data/` in the repo. `mq-stop` stops RabbitMQ, whose data is under `.nix-data/rabbitmq/`.
 
 > Building the packages runs `bun install` against the npm registry inside a fixed-output derivation, so builds need network access on first run. Native dependencies differ per platform, so each one has its own hash in `nix/hashes.json` (linux × x86_64/arm64 and Apple Silicon macOS). The `nix-hashes` workflow recomputes and commits them whenever `bun.lock`/`package.json` change, so dependency bumps don't break the flake. Intel macOS (`x86_64-darwin`) was retired from nixpkgs and is not supported.
 
@@ -520,7 +524,7 @@ bun run db:push
 bun run dev
 ```
 
-With Nix, `docker compose up -d postgres` becomes `db-start` inside `nix develop`; the rest is identical.
+With Nix, `docker compose up -d postgres` becomes `db-start` inside `nix develop`, and `mq-start` starts the broker of the GitHub queue when you need it; the rest is identical.
 
 Open [http://localhost:3000](http://localhost:3000). Run `bun run db:push` again after changing `server/db/schema.ts`.
 
@@ -534,6 +538,44 @@ bun run db:push       # Push server/db/schema.ts to PostgreSQL
 ```
 
 Database structure is defined only in `server/db/schema.ts`. After changing it, run `bun run db:push`; do not commit generated SQL, snapshots, or migration metadata.
+
+## GitHub deliveries and the queue
+
+**Current state (GH6a).** The queue exists: the interface, a RabbitMQ implementation, an in-memory one for development and tests, the dev broker, Compose and NixOS wiring, and the topology. **The webhook is unchanged in this change and still uses the inline hand-off**, so GitHub deliveries are applied in-process as before, and nothing is published to RabbitMQ yet. The publisher and the consumer arrive with the next change (GH6b). Everything below marked *GH6b* describes that next change, not this one.
+
+- **Configuration (today)**: `RABBITMQ_URL` (`amqp://user:password@host:5672/vhost`) is read by the queue module when something calls it. The health view shows the queue's state. Nothing on the request path depends on it yet.
+- **Secrets**: the URL carries the broker password. Logs, events and errors show only the scheme, host, port and vhost, as `amqp://***@host:5672/vhost`. Keep the URL in the environment or an environment file, never in a committed file and never on a command line. The password must be URL-safe (letters and digits, as `openssl rand -hex` gives), or the URL breaks; percent-encode anything else.
+- **Topology (declared when the queue first connects, and again after every reconnect; repeating it changes nothing)**: one direct exchange `github.deliveries`; quorum queues `github.deliveries` (the work), `github.deliveries.retry.30s` and `github.deliveries.retry.2m` (a delivery waits there 30 s or 2 min, then returns to the work queue), and `github.deliveries.failed` (no expiry, no limit). `github.deliveries` has a delivery limit of 5, dead-lettering to `failed` with reason `delivery_limit`: a message a dying consumer keeps handing back ends there, not in a loop.
+- **Changed since round 1 (the first GH6a commit)**: `github.deliveries` gained `x-delivery-limit` 5 and a dead-letter target `github.deliveries.failed`. Round 1 had neither. A broker that already holds the round-1 queue refuses the new declaration with `PRECONDITION_FAILED`.
+- **If the declaration fails**: the health view shows `unavailable` with the failing step, the queue name and the error class and code (for example `github.deliveries: Error PRECONDITION_FAILED`). The log has one line per distinct failure, with no URL and no message text. Requests fail fast and the declaration is retried with backoff (1 s, doubling, up to 30 s). The HTTP 503 that GH6b will answer for GitHub events is the symptom; the log line and the health view name the cause. **Operator fix**: when the arguments changed, delete the old queue and let the server declare it again. Only the queue is lost, and only if it still holds messages, so check the depth first: `rabbitmqctl -p arnotes delete_queue github.deliveries` (dev: `mq-start` does not delete it; run the command by hand). Delete the retry queues the same way when their arguments changed.
+- **Reconnects**: the client retries with exponential backoff, from 1 s up to 30 s, with jitter, and resumes its consumers. The log has one line per change of state (connecting, connected, unreachable, reconnected), not one per attempt.
+- **Secrets on the broker side**: the image's default guest user is refused from any address but the container's own loopback; mq-start deletes it; the NixOS module deletes it.
+
+*GH6b, arrives with the publisher and consumer (next change):*
+
+- The webhook checks the signature, publishes the delivery with publisher confirms, and answers `202` only once the broker has confirmed it. When the broker is unavailable it answers `503`, so GitHub shows the delivery as failed and a redelivery from the webhook settings works. A body over 2 MB is refused with `413` (the same cap as the webhook's own).
+- The consumer hands out one delivery at a time. The handler decides: `ack` removes it; a retry goes to the retry queue with one more attempt and then the original is removed; a failure goes to `failed` with a reason (one line, at most 200 characters, no payload) and then the original is removed. A handler that throws, returns nothing, or runs past 5 minutes is failed. The handler gets an abort signal at its timeout; the abort does not undo effects it already made, and its late answer is discarded (the claim table keyed by the delivery id keeps a repeat harmless).
+- A failed copy is retried after a one-second pause, bounded by the delivery limit.
+- The database record of each failed delivery is what the PM works from. The broker's `failed` queue is a safety net: purge it only after its records are handled, with `rabbitmqctl -p arnotes purge_queue github.deliveries.failed`. The `-p arnotes` matters: without it the command purges the default vhost's queue of that name, and reports success.
+- The server closes the queue on shutdown: the consumer's stop function first, then `closeDeliveryQueue()`.
+
+**Development and NixOS (today)**
+
+- `mq-start` in `nix develop` starts a local broker on `127.0.0.1:5672` with a dev user and vhost and prints a dev `RABBITMQ_URL`; `mq-stop` stops it. `services.arnotes.queue.enable = true` runs RabbitMQ on the host: the broker user `arnotes` and its vhost are created by `arnotes-rabbitmq-setup` from a password generated into the state directory. The password is read by the broker from a credential file through `rabbitmqctl eval_file`, so no command line carries it. The setup runs whenever `queue.enable` is set, also with `queue.urlFile`.
+- `services.arnotes.queue.urlFile` points at an external broker's URL, as an absolute runtime path, never a store path. Create it so only root can read it (the service reads it as root at start):
+
+  ```bash
+  printf 'amqp://arnotes:%s@broker.example.com:5672/arnotes\n' "$(openssl rand -hex 24)" | sudo install -m 0600 /dev/stdin /var/lib/secrets/arnotes-rabbitmq-url
+  ```
+
+  Create the same user with the same password on the external broker first.
+- Compose: `docker compose` starts a `rabbitmq` service on `127.0.0.1` (AMQP only; the management listener runs inside the container on the compose network and is not published). It needs `RABBITMQ_PASSWORD` in `.env`, with no default; `RABBITMQ_USER`, `RABBITMQ_VHOST` and `RABBITMQ_PORT` are optional. The app's `RABBITMQ_URL` is built from them. The app does not connect to the broker until GH6b.
+
+**Tests and CI**
+
+- `node --import tsx --test tests/github-delivery-queue.test.ts` (and `bun test tests/github-delivery-queue.test.ts`) runs the queue suite. The RabbitMQ part runs only when `RABBITMQ_URL` is set. It creates its own vhost `arnotes-test-*` through the management API (`RABBITMQ_MANAGEMENT_URL`, default `http://host:15672`) and deletes it at the end, so it never touches the shared vhost. The user in the URL needs the administrator tag. Without a reachable broker and management API the RabbitMQ part is skipped with a message.
+- A run that is killed (Ctrl-C, a CI timeout) leaks its `arnotes-test-*` vhosts. Delete them by hand: `rabbitmqctl list_vhosts` and `rabbitmqctl delete_vhost <name>`.
+- CI: run the same suite against a broker service container, `rabbitmq:4.3.1-management-alpine`, with `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS` and `RABBITMQ_DEFAULT_VHOST` set from CI secrets. Publish its port, export `RABBITMQ_URL` for that user (the path part is replaced by the test), and run the command under Node and under Bun.
 
 ## Architecture
 
