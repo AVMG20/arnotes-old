@@ -51,7 +51,7 @@ async function consumeWith(queue: DeliveryQueue, handler: (message: HandedMessag
     received.push(message)
     return handler(message, received.length, context)
   }
-  const stop = await queue.consume(onMessage, { prefetch: 1, ...(handlerTimeoutMs ? { handlerTimeoutMs } : {}) })
+  const stop = await queue.consume(onMessage, { prefetch: 1, beforeFail: async () => {}, ...(handlerTimeoutMs ? { handlerTimeoutMs } : {}) })
   return { received, stop }
 }
 
@@ -131,7 +131,7 @@ function contract(suite: Suite, after_: () => Promise<void> = async () => {}): v
       const first = uid('nothing-1')
       const second = uid('nothing-2')
       const failedBefore = await queue.failedDepth()
-      await queue.publish('main', message(first))
+      await queue.publish('main', message(first, 2))
       await queue.publish('main', message(second))
       const { received, stop } = await consumeWith(queue, (m, n) => (n === 1 ? undefined : 'ack'))
       await waitUntil(() => received.length === 2, 'the second delivery')
@@ -143,7 +143,7 @@ function contract(suite: Suite, after_: () => Promise<void> = async () => {}): v
     test('a handler that throws fails its delivery: main ends empty, failed holds it', async () => {
       const queue = await fresh()
       const failedBefore = await queue.failedDepth()
-      await queue.publish('main', message(uid('throws')))
+      await queue.publish('main', message(uid('throws'), 2))
       const { received, stop } = await consumeWith(queue, () => {
         throw new Error('the handler broke')
       })
@@ -157,7 +157,7 @@ function contract(suite: Suite, after_: () => Promise<void> = async () => {}): v
       const queue = await fresh()
       const failedBefore = await queue.failedDepth()
       const second = uid('timeout-2')
-      await queue.publish('main', message(uid('timeout-1')))
+      await queue.publish('main', message(uid('timeout-1'), 2))
       await queue.publish('main', message(second))
       const { received, stop } = await consumeWith(queue, (m, n) => (n === 1 ? never() : 'ack'), 100)
       await waitUntil(() => received.length === 2, 'the second delivery')
@@ -309,7 +309,7 @@ if (testVhost) {
       await dying.consume((m) => {
         seen.push(m.deliveryId)
         return never()
-      }, { prefetch: 1 })
+      }, { prefetch: 1, beforeFail: async () => {} })
       await waitUntil(() => seen.length === 1, 'the delivery in hand')
       dying.crashForTest()
       await dying.close()
@@ -434,7 +434,7 @@ describe('in-memory queue: clock, crashes, dispositions and limits', () => {
 
   test('a handler past its timeout is aborted, and its late answer is discarded with one line', async () => {
     const queue = fresh()
-    await queue.publish('main', message('late-1'))
+    await queue.publish('main', message('late-1', 2))
     let aborted = false
     const stop = await queue.consume(async (_m, context) => {
       context.signal.addEventListener('abort', () => {
@@ -442,7 +442,7 @@ describe('in-memory queue: clock, crashes, dispositions and limits', () => {
       })
       await new Promise(resolve => setTimeout(resolve, 150))
       return 'ack'
-    }, { prefetch: 1, handlerTimeoutMs: 30 })
+    }, { prefetch: 1, beforeFail: async () => {}, handlerTimeoutMs: 30 })
     await waitUntil(async () => (await queue.failedDepth()) === 1, 'the timed-out copy')
     await waitUntil(() => lines.some(line => line.includes('answered after its timeout')), 'the late answer line')
     await stop()
@@ -463,20 +463,21 @@ describe('in-memory queue: clock, crashes, dispositions and limits', () => {
 
 describe('decide: every outcome becomes a disposition', () => {
   const quiet = (): void => {}
-  const deliver = { deliveryId: 'decide-1', event: 'issues', attempt: 0, body: Buffer.from('{}'), redelivered: false }
+  const deliver = { deliveryId: 'decide-1', event: 'issues', attempt: 0, body: Buffer.from('{}'), redelivered: false, deliveries: 1 }
   const options = { timeoutMs: 1_000, maxBodyBytes: MAX_BODY_BYTES }
-
   test('ack, retry and fail pass through; a bad answer, a throw and a timeout fail', async () => {
     assert.equal(await decide(() => 'ack', deliver, options, quiet), 'ack')
     assert.deepEqual(await decide(() => ({ retry: 'retry2m', reason: 'x' }), deliver, options, quiet), { retry: 'retry2m', reason: 'x' })
     assert.deepEqual(await decide(() => ({ fail: 'y' }), deliver, options, quiet), { fail: 'y' })
-    assert.deepEqual(await decide(() => undefined, deliver, options, quiet), { fail: 'handler error' })
-    assert.deepEqual(await decide(() => ({ nonsense: true }) as unknown as Disposition, deliver, options, quiet), { fail: 'handler error' })
+    assert.deepEqual(await decide(() => undefined, deliver, options, quiet), { retry: 'retry30s', reason: 'handler error' })
+    assert.deepEqual(await decide(() => ({ nonsense: true }) as unknown as Disposition, deliver, options, quiet), { retry: 'retry30s', reason: 'handler error' })
     const thrower = (): never => {
       throw new Error('boom')
     }
-    assert.deepEqual(await decide(thrower, deliver, options, quiet), { fail: 'handler error' })
-    assert.deepEqual(await decide(() => never(), deliver, { ...options, timeoutMs: 20 }, quiet), { fail: 'handler timeout' })
+    assert.deepEqual(await decide(thrower, deliver, options, quiet), { retry: 'retry30s', reason: 'handler error' })
+    assert.deepEqual(await decide(() => never(), deliver, { ...options, timeoutMs: 20 }, quiet), { retry: 'retry30s', reason: 'handler timeout' })
+    // On the last attempt the same timeout is recorded and failed.
+    assert.deepEqual(await decide(() => never(), { ...deliver, attempt: 2 }, { ...options, timeoutMs: 20 }, quiet), { fail: 'handler timeout' })
   })
 
   test('the log names the delivery and the class only, never the message', async () => {
@@ -732,7 +733,7 @@ describe('RabbitMQ adapter against a fake broker: topology failures and the requ
     await queue.consume(async () => {
       calls += 1
       return { fail: 'bad body' }
-    }, { prefetch: 1 })
+    }, { prefetch: 1, beforeFail: async () => {} })
     assert.ok(broker.consumerCallback)
     const started = Date.now()
     const status = await broker.consumerCallback!({

@@ -1,51 +1,5 @@
-// The hand-off the webhook calls today, and the webhook's per-minute accept limit. GH6b makes the webhook
-// publish through getDeliveryQueue() instead, and deletes this file with its re-export in githubDeliveryQueue.ts.
-import type { DeliveryJob } from './githubCards'
-import { DeliveryError, processGithubDelivery } from './githubCards'
-import { databaseCardStore } from './githubCardStore'
-
-/** The hand-off the webhook calls today. The webhook awaits enqueue, and answers 202 only once it resolved. */
-export interface DeliveryHandoff {
-  /**
-   * Takes one delivery. Resolves once the job is kept: the webhook then answers 202. Rejects when it
-   * cannot keep the job: the webhook then answers 503, so GitHub shows the delivery as failed and a
-   * redelivery from its settings works.
-   */
-  enqueue(job: DeliveryJob): Promise<void>
-}
-
-/** Applies each job in this process, after the answer. A failure is logged with the delivery id; nothing retries it yet. */
-export const inlineDeliveryQueue: DeliveryHandoff = {
-  async enqueue(job) {
-    void applyJob(job)
-  }
-}
-
-async function applyJob(job: DeliveryJob): Promise<void> {
-  const id = job.deliveryId || '(no id)'
-  try {
-    await processGithubDelivery(job, { store: databaseCardStore })
-  } catch (error) {
-    if (error instanceof DeliveryError) {
-      console.error(`GitHub delivery ${id} (${job.event}) was not applied: ${error.kind}, ${error.reason}`)
-    } else {
-      const kind = error instanceof Error ? error.name : 'non-Error'
-      console.error(`GitHub delivery ${id} (${job.event}) was not applied: ${kind}`)
-    }
-  }
-}
-
-let current: DeliveryHandoff = inlineDeliveryQueue
-
-/** The hand-off the webhook hands jobs to. */
-export function deliveryQueue(): DeliveryHandoff {
-  return current
-}
-
-/** Replaces the hand-off (the broker, or a test double). `null` puts the inline one back. */
-export function useDeliveryQueue(queue: DeliveryHandoff | null): void {
-  current = queue ?? inlineDeliveryQueue
-}
+// The webhook's per-minute accept limit for synced deliveries. It runs before a delivery is queued, so a burst
+// from one repository is refused with 429 instead of filling the queue.
 
 const WINDOW_MS = 60_000
 export const DEFAULT_PER_MINUTE = 120
