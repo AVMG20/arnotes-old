@@ -7,7 +7,7 @@ import type { Audience } from './auth-helpers'
 // built, so the app and the MCP tools cannot disagree about what a reply shows.
 
 export interface ReplyPreview {
-  id: string
+  id: string | null
   authorName: string | null
   excerpt: string
   deleted: boolean
@@ -75,7 +75,7 @@ export async function attachReplyPreviews<T extends { replyToId: string | null }
   }))
 }
 
-function buildReplyPreview(
+export function buildReplyPreview(
   replyToId: string | null,
   parents: Map<string, { id: string, body: string, visibility: string, userName: string | null, keyName: string | null }>,
   audience: Audience
@@ -83,7 +83,7 @@ function buildReplyPreview(
   if (!replyToId) return null
   const parent = parents.get(replyToId)
   // Gone (or not on this task): the reply still loads, and says so.
-  if (!parent) return { id: replyToId, authorName: null, excerpt: '', deleted: true }
+  if (!parent) return { id: null, authorName: null, excerpt: 'a deleted update', deleted: true }
   // A contact learns nothing about an internal comment: not its text, author or id.
   if (audience === 'customer' && parent.visibility !== 'customer') return null
   return {

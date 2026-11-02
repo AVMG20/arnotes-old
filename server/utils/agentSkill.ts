@@ -9,6 +9,11 @@ import type { McpToolDefinition } from './mcpToolKit'
 // A group may carry a note: a short paragraph on what its tools have in common.
 const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note?: string }[] = [
   { title: 'Boards, columns and tasks', match: tool => /^(list_boards|get_board|get_task|search_tasks|list_task_labels|create_board|update_board|(create|update|delete|restore)_(column|task)|post_task_update|move_task)$/.test(tool.name) },
+  {
+    title: 'Task updates',
+    match: tool => /^(edit|delete)_task_update$/.test(tool.name),
+    note: 'An update on a task can be changed or removed by its author only: you may change what you posted, or what your key\'s owner posted through an agent. A customer contact may change only the customer-visible updates they wrote. An edit keeps the update\'s visibility and reply, marks it edited with the time, and does not tell anyone again; the old text is not kept. A delete removes the update for good, with no trash, and a reply to it stays and shows that its target was deleted. Both are recorded in the key owner\'s Inbox without the text. Read the thread with get_task to find the update id.'
+  },
   { title: 'My tasks and my inbox', match: tool => /^(my_tasks|list_notifications|mark_notifications_read)$/.test(tool.name) },
   { title: 'Custom fields', match: tool => /_fields?$/.test(tool.name) },
   {
@@ -92,7 +97,7 @@ from you, and anything the app would refuse them is refused to you.
   team's status updates, messages or time. You can file a task. You cannot plan
   it (dates, assignee, done mark, fields), change it, or change the board.
 - Trashed things are not there. Deleting puts things in the board's trash, which
-  the person can restore; nothing here deletes for good, and boards cannot be
+  the person can restore; nothing here deletes for good (the one exception is an update removed with delete_task_update, which is gone at once), and boards cannot be
   deleted over MCP.
 
 When a tool refuses with a reason that names a customer role, that is the rule
@@ -103,7 +108,7 @@ look for another route to it.
 
 1. **Read before you write.** \`get_board\` gives the board, column and task names
    exactly as written; use them verbatim. \`get_task\` has the full description
-   and the thread of updates.
+   and the thread of updates, oldest first. On a long one, read a slice first (see "Reading a long thread").
 2. **Say what you will change, then change only that.** Writes replace the value
    you send, so for a description read the task first and send the whole text.
 3. **Clearing:** pass an empty string to clear a date or assignee, and \`null\` to
@@ -115,6 +120,18 @@ look for another route to it.
 6. **Check your result.** Write tools return the card or entry as it is stored;
    read it rather than assuming.
 
+## Reading a long thread
+
+\`get_task\` returns the whole thread unless you ask for less. On a long one, read the latest updates first and fetch the whole thread only when you need it. One example per option:
+
+- \`limit\`: \`{"id": "<task id>", "limit": 5}\` gives the five oldest updates; with \`"order": "newest"\` it gives the five newest.
+- \`order\`: \`{"id": "<task id>", "order": "newest"}\` lists the thread newest first. The default is \`"oldest"\`.
+- \`since\`: \`{"id": "<task id>", "since": "2026-11-02T10:00:00Z"}\` gives the updates strictly after that time. The time must be a full ISO 8601 time with a zone; an update id works too.
+- \`prefix\`: \`{"id": "<task id>", "prefix": "NITPICKER:"}\` gives the updates whose body starts with that text, ignoring case.
+
+Filters apply before the limit, so \`{"id": "<task id>", "prefix": "QUESTION", "order": "newest", "limit": 1}\` is the latest question. The result says \`updatesMatched\` (how many matched in all) and \`updatesShown\` (how many came back). When they differ you have a slice, not the whole thread. Counts cover only the updates you may see. There is no paging: to read on, pass \`since\` with the id of the last update you have, which is the cursor to prefer. \`since\` is strictly after, so an update made in the same millisecond as the mark is left out. A thread over 5000 updates is cut, and the result says so in \`threadNote\`: use \`since\`.
+
+## Tools
 ## Tools
 
 ${sections.join('\n\n')}

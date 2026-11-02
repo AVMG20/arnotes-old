@@ -13,7 +13,7 @@ export function commentLink(projectId: string, taskId: string, commentId: string
 // already drops the preview for a viewer who may not see the parent.
 export function replyLineText(replyTo: CommentReplyPreview | null | undefined): string | null {
   if (!replyTo) return null
-  if (replyTo.deleted) return 'In reply to a deleted comment'
+  if (replyTo.deleted) return 'In reply to a deleted update'
   const who = replyTo.authorName || 'someone'
   return replyTo.excerpt ? `In reply to ${who}: ${replyTo.excerpt}` : `In reply to ${who}`
 }
