@@ -1,0 +1,38 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 7001,
+    "name": "CI",
+    "node_id": "WFR_recorded_fixture",
+    "head_branch": "feature/export-button",
+    "head_sha": "3f9c1d0e7b2a4c5d6e8f9a0b1c2d3e4f5a6b7c8d",
+    "path": ".github/workflows/ci.yml",
+    "run_number": 42,
+    "event": "pull_request",
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/example-owner/example-repo/actions/runs/7001",
+    "run_started_at": "2026-11-02T10:01:00Z",
+    "created_at": "2026-11-02T10:00:58Z",
+    "updated_at": "2026-11-02T10:04:00Z",
+    "pull_requests": [
+      {
+        "url": "https://api.github.com/repos/example-owner/example-repo/pulls/31",
+        "id": 1000000031,
+        "number": 31,
+        "head": { "ref": "feature/export-button", "sha": "3f9c1d0e7b2a4c5d6e8f9a0b1c2d3e4f5a6b7c8d" },
+        "base": { "ref": "main", "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567" }
+      }
+    ]
+  },
+  "workflow": { "id": 6001, "name": "CI", "path": ".github/workflows/ci.yml", "state": "active" },
+  "repository": {
+    "id": 2,
+    "name": "example-repo",
+    "full_name": "example-owner/example-repo",
+    "private": false,
+    "owner": { "login": "example-owner", "id": 1, "type": "User" },
+    "default_branch": "main"
+  },
+  "sender": { "login": "example-owner", "id": 1, "type": "User" }
+}
