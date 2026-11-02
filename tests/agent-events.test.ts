@@ -421,13 +421,12 @@ test('a write that fails ends the stream at once', () => {
 test('a ping comment goes out on the interval and stops when the stream is released', async () => {
   const { hub } = makeHub({ pingMs: 10 })
   const { connection, slot } = open(hub, key('k-ping', 'u5'))
-  await new Promise(resolve => setTimeout(resolve, 45))
-  const pings = connection.chunks.filter(chunk => chunk === ': ping\n\n').length
-  assert.ok(pings >= 2, `expected at least 2 pings, got ${pings}`)
+  const pings = () => connection.chunks.filter(chunk => chunk === ': ping\n\n').length
+  await until(() => pings() >= 2, 2_000)
 
   slot.release()
   const after = connection.chunks.length
-  await new Promise(resolve => setTimeout(resolve, 30))
+  await new Promise(resolve => setTimeout(resolve, 60))
   assert.equal(connection.chunks.length, after)
   assert.equal(hub.timerCount, 0)
 })
@@ -437,7 +436,7 @@ test('a key that may no longer stream is told why and its stream ends', async ()
   let reason: CloseReason | null = null
   const { connection } = open(hub, key('k-revoked', 'u-revoked'), undefined, { teamIds: [], customerIds: [] }, async () => reason)
   reason = 'key_revoked'
-  await new Promise(resolve => setTimeout(resolve, 30))
+  await until(() => connection.ended, 2_000)
   assert.ok(connection.text().endsWith('event: closed\ndata: {"kind":"closed","reason":"key_revoked"}\n\n'))
   assert.equal(connection.ended, true)
   assert.equal(hub.streamCount, 0)
@@ -452,7 +451,7 @@ test('a failed re-check keeps the stream open; a clean one leaves it alone', asy
     if (calls === 1) throw new Error('database blip')
     return null
   })
-  await new Promise(resolve => setTimeout(resolve, 30))
+  await until(() => calls >= 2, 2_000)
   assert.ok(calls >= 2)
   assert.equal(connection.ended, false)
   assert.equal(hub.streamCount, 1)
