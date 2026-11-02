@@ -7,7 +7,7 @@
 // Differences from RabbitMQ, on purpose: a dropped connection ends the consumers, and the next consume starts
 // them again (the client resubscribes by itself; the fake makes the caller do it, so the test shows it).
 import { DELIVERY_LIMIT, DELIVERY_QUEUES, DeliveryQueueUnavailable, DeliveryTooLarge, MAX_BODY_BYTES, DEFAULT_HANDLER_TIMEOUT_MS, RETRY_TTL_MS, cutReason, decide, errorSummary } from './githubDeliveryQueueTypes'
-import type { ConsumeHandler, ConsumeOptions, Disposition, DeliveryQueue, DeliveryQueueName, HandedMessage, QueueMessage, QueueStatus } from './githubDeliveryQueueTypes'
+import type { BeforeFail, ConsumeHandler, ConsumeOptions, Disposition, DeliveryQueue, DeliveryQueueName, HandedMessage, QueueMessage, QueueStatus } from './githubDeliveryQueueTypes'
 
 const SWEEP_MS = 250
 
@@ -22,6 +22,8 @@ export interface MemoryDeliveryQueue extends DeliveryQueue {
    * redelivered, and the consumers stop. Arms once.
    */
   crashAfter(point: CrashPoint): void
+  /** Tests: the next copy of a delivery to failed is not confirmed: the delivery is requeued, as a closed channel would. */
+  failNextFailedCopy(): void
   /** Tests: drops the connection now, as a restart of the broker would. */
   dropConnection(): void
   /** Tests: deliveries handed out and not yet settled. */
@@ -44,6 +46,7 @@ interface StoredMessage extends QueueMessage {
 interface Consumer {
   onMessage: ConsumeHandler
   timeoutMs: number
+  beforeFail: BeforeFail
   active: boolean
   inFlight: number
 }
@@ -60,6 +63,7 @@ export function createMemoryDeliveryQueue(options: { manualClock?: boolean, log?
   /** Handed out and not yet settled, with the consumer that holds them. */
   const unacked = new Map<StoredMessage, Consumer>()
   let crashPoint: CrashPoint | null = null
+  let failCopyOnce = false
   let closed = false
   let pumping = false
   let repump = false
@@ -119,9 +123,10 @@ export function createMemoryDeliveryQueue(options: { manualClock?: boolean, log?
             event: message.event,
             attempt: message.attempt,
             body: message.body,
-            redelivered: message.redelivered
+            redelivered: message.redelivered,
+            deliveries: message.deliveries
           }
-          void decide(consumer.onMessage, handed, { timeoutMs: consumer.timeoutMs, maxBodyBytes }, log)
+          void decide(consumer.onMessage, handed, { timeoutMs: consumer.timeoutMs, maxBodyBytes, beforeFail: consumer.beforeFail }, log)
             .then(disposition => settle(message, consumer, disposition))
             .catch((error: unknown) => {
               log(`GitHub delivery ${cutReason(message.deliveryId) || '(no id)'} was not settled (${errorSummary(error)}); the broker redelivers it`)
@@ -139,6 +144,16 @@ export function createMemoryDeliveryQueue(options: { manualClock?: boolean, log?
   function settle(message: StoredMessage, consumer: Consumer, disposition: Disposition): void {
     if (unacked.get(message) !== consumer) {
       throw new DeliveryQueueUnavailable('the delivery is no longer held: the connection dropped before its ack')
+    }
+    if (failCopyOnce && disposition !== 'ack' && 'fail' in disposition) {
+      // The failed copy is not confirmed: the delivery is requeued, unacked, as a closed channel would return it.
+      failCopyOnce = false
+      unacked.delete(message)
+      message.redelivered = true
+      queues.main.unshift(message)
+      consumer.inFlight--
+      pump()
+      throw new DeliveryQueueUnavailable('the failed copy was not confirmed; the delivery is requeued')
     }
     if (disposition !== 'ack') {
       const copy: StoredMessage = {
@@ -207,9 +222,11 @@ export function createMemoryDeliveryQueue(options: { manualClock?: boolean, log?
     async consume(onMessage, options: ConsumeOptions) {
       ensureOpen()
       if (options.prefetch !== 1) throw new RangeError('prefetch must be 1')
+      if (typeof options.beforeFail !== 'function') throw new TypeError('beforeFail is required')
       const consumer: Consumer = {
         onMessage,
         timeoutMs: options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS,
+        beforeFail: options.beforeFail,
         active: true,
         inFlight: 0
       }
@@ -263,6 +280,10 @@ export function createMemoryDeliveryQueue(options: { manualClock?: boolean, log?
     },
 
     dropConnection,
+
+    failNextFailedCopy() {
+      failCopyOnce = true
+    },
 
     unackedCount() {
       return unacked.size

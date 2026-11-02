@@ -138,10 +138,47 @@ export interface DeliveryJob {
  * What the work runs with: the store, the comment ids the crew owns (GITHUB_ECHO_COMMENT_IDS by
  * default), and the key the markers are signed with (markerKey() by default).
  */
+/** The attempt was given up (its signal aborted): the work stops at its next store call and writes nothing more. */
+export class DeliveryAborted extends Error {
+  constructor() {
+    super('the delivery was abandoned')
+    this.name = 'AbortError'
+  }
+}
+
+/**
+ * The store with each call guarded by the signal: no call starts once the signal is aborted, and a call still
+ * waiting is left behind when it aborts. A store write that is already running may still finish on its own; no
+ * later step runs.
+ */
+function guardStore(store: GithubCardStore, signal: AbortSignal | undefined): GithubCardStore {
+  if (!signal) return store
+  const aborted = new Promise<never>((_resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new DeliveryAborted()), { once: true })
+  })
+  aborted.catch(() => {})
+  const guarded = <A extends unknown[], R>(call: (...args: A) => Promise<R>) => async (...args: A): Promise<R> => {
+    if (signal.aborted) throw new DeliveryAborted()
+    return Promise.race([call(...args), aborted])
+  }
+  return {
+    linkedRepos: guarded(store.linkedRepos.bind(store)),
+    recordIgnored: guarded(store.recordIgnored.bind(store)),
+    issueCard: guarded(store.issueCard.bind(store)),
+    resolveColumn: guarded(store.resolveColumn.bind(store)),
+    createIssueCard: guarded(store.createIssueCard.bind(store)),
+    updateCard: guarded(store.updateCard.bind(store)),
+    hasUpdate: guarded(store.hasUpdate.bind(store)),
+    addUpdate: guarded(store.addUpdate.bind(store))
+  }
+}
+
 export interface DeliveryDeps {
   store: GithubCardStore
   echoCommentIds?: Set<string>
   markerKey?: string
+  /** The attempt's signal: once it aborts, no further store call starts, and a call still waiting is left behind. */
+  signal?: AbortSignal
 }
 
 // ─── Signature and body ──────────────────────────────────────────────────────
@@ -323,7 +360,7 @@ function derivedDeliveryId(job: DeliveryJob, number: number, action: string): st
  */
 export async function processGithubDelivery(job: DeliveryJob, deps: DeliveryDeps): Promise<Outcome> {
   const { event, payload, receivedAt: now } = job
-  const { store } = deps
+  const store = guardStore(deps.store, deps.signal)
   if (!(SYNCED_EVENTS as readonly string[]).includes(event)) return 'ignored'
 
   const owner = job.repoOwner
@@ -340,7 +377,8 @@ export async function processGithubDelivery(job: DeliveryJob, deps: DeliveryDeps
   let repos: SyncedRepo[]
   try {
     repos = (await store.linkedRepos(owner, repo)).filter(row => row.syncEnabled)
-  } catch {
+  } catch (error) {
+    if (error instanceof DeliveryAborted) throw error
     throw new DeliveryError('transient', 'could not read the linked repositories')
   }
   if (!repos.length) return 'ignored'
@@ -361,6 +399,7 @@ export async function processGithubDelivery(job: DeliveryJob, deps: DeliveryDeps
         else await onComment(store, repoRow, payload, number, action, echoCommentIds, mark)
       })
     } catch (error) {
+      if (error instanceof DeliveryAborted) throw error
       failures.push(classify(error, row.projectId))
     }
   }

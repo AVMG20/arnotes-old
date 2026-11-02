@@ -20,6 +20,14 @@ export const DELIVERY_LIMIT = 5
 /** The longest reason kept on a retry or failed delivery. Reasons are one line and never carry the payload. */
 export const REASON_MAX = 200
 
+/** The attempts a delivery gets in all, the first one included. The consumer and the adapter share this ladder. */
+export const MAX_ATTEMPTS = 3
+
+/** The retry queue for the next attempt, given the attempts made so far: 30 s after the first, 2 min after the second. */
+export function retryQueueForAttempt(attemptsMade: number): 'retry30s' | 'retry2m' {
+  return attemptsMade <= 1 ? 'retry30s' : 'retry2m'
+}
+
 /** One delivery as it is published. `body` is the signed GitHub payload, exactly as it arrived. */
 export interface QueueMessage {
   deliveryId: string
@@ -33,6 +41,8 @@ export interface QueueMessage {
 export interface HandedMessage extends QueueMessage {
   /** The broker handed this message out before: an earlier consumer stopped or died with it unacked. */
   redelivered: boolean
+  /** How many times the broker has handed this message out, this time included (1 on the first hand-out). */
+  deliveries: number
 }
 
 /**
@@ -58,6 +68,8 @@ export type ConsumeHandler = (message: HandedMessage, context: { signal: AbortSi
 export interface ConsumeOptions {
   /** One delivery at a time per consumer. Only 1 is accepted. */
   prefetch: 1
+  /** Records a failure before the copy to failed (see BeforeFail). Required: a delivery cannot be failed without it. */
+  beforeFail: BeforeFail
   /** Time the handler gets before the delivery is failed as 'handler timeout'. Default 5 minutes. */
   handlerTimeoutMs?: number
 }
@@ -153,60 +165,83 @@ function isDisposition(value: unknown): value is Exclude<Disposition, 'ack'> {
 }
 
 /**
+ * Records a failure before the adapter copies the delivery to `failed`. Called for every failure the adapter
+ * decides itself. A timeout, a throw or a missing answer is transient: it takes the same retry ladder as any
+ * transient failure, and only the last attempt is recorded and copied. An oversize body is permanent: it is
+ * recorded and copied at once. If the record cannot be written, the delivery is retried instead: nothing is
+ * copied and nothing is acked.
+ */
+export type BeforeFail = (message: HandedMessage, reason: string) => Promise<void>
+
+/**
  * Runs the handler and turns its outcome into a disposition. Never throws, and never leaves a delivery
- * undecided: a throw, a missing or malformed answer, an oversize body or a timeout becomes a failure.
- * On a timeout the handler's AbortSignal is aborted, and an answer that comes later is discarded with one line.
- * Aborting stops nothing by itself: effects the handler already made are not undone, so they are idempotent
- * by the claim table. Logs the delivery id and the error class only.
+ * undecided. On a timeout the handler's AbortSignal is aborted, and an answer that comes later is discarded with
+ * one line. Aborting stops nothing by itself: the handler must stop its own work on the signal. Logs the delivery
+ * id and the error class only.
  */
 export async function decide(
   onMessage: ConsumeHandler,
   message: HandedMessage,
-  options: { timeoutMs: number, maxBodyBytes: number },
+  options: { timeoutMs: number, maxBodyBytes: number, beforeFail?: BeforeFail },
   log: (line: string) => void
 ): Promise<Disposition> {
   const id = cutReason(message.deliveryId) || '(no id)'
-  if (message.body.length > options.maxBodyBytes) return { fail: 'body over size cap' }
+  const adapterFailure = async (reason: string, transient: boolean): Promise<Disposition> => {
+    const made = message.attempt + 1
+    if (transient && made < MAX_ATTEMPTS) return { retry: retryQueueForAttempt(made), reason: cutReason(reason) }
+    if (options.beforeFail) {
+      try {
+        await options.beforeFail(message, reason)
+      } catch (error) {
+        log(`GitHub delivery ${id} (${message.event}): the failure could not be recorded (${errorSummary(error)}); retried`)
+        return { retry: retryQueueForAttempt(made), reason: cutReason('the failure could not be recorded') }
+      }
+    }
+    return { fail: cutReason(reason) }
+  }
+  if (message.body.length > options.maxBodyBytes) return adapterFailure('body over size cap', false)
+
   const controller = new AbortController()
   let timedOut = false
   let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<Disposition>((resolve) => {
+  const timeout = new Promise<Settled>((resolve) => {
     timer = setTimeout(() => {
       timedOut = true
       controller.abort()
-      resolve({ fail: 'handler timeout' })
+      log(`GitHub delivery ${id} (${message.event}): handler timeout; handler aborted`)
+      resolve({ adapter: 'handler timeout' })
     }, options.timeoutMs)
     // A handler that never answers must not keep the process alive for the rest of its timeout.
     ;(timer as { unref?: () => void }).unref?.()
   })
   const outcome = Promise.resolve()
     .then(() => onMessage(message, { signal: controller.signal }))
-    .then((result): Disposition => {
+    .then((result): Settled => {
       if (timedOut) {
         log(`GitHub delivery ${id} (${message.event}): handler answered after its timeout; the answer is discarded`)
-        return { fail: 'handler timeout' }
+        return { adapter: 'handler timeout' }
       }
-      if (result === 'ack') return 'ack'
+      if (result === 'ack') return { handler: 'ack' }
       if (isDisposition(result)) {
-        return 'fail' in result ? { fail: cutReason(result.fail) } : { retry: result.retry, reason: cutReason(result.reason) }
+        return { handler: 'fail' in result ? { fail: cutReason(result.fail) } : { retry: result.retry, reason: cutReason(result.reason) } }
       }
       log(`GitHub delivery ${id} (${message.event}): handler returned no disposition; failed`)
-      return { fail: 'handler error' }
-    }, (error: unknown): Disposition => {
+      return { adapter: 'handler error' }
+    }, (error: unknown): Settled => {
       if (timedOut) {
         log(`GitHub delivery ${id} (${message.event}): handler threw after its timeout (${errorSummary(error)}); discarded`)
-        return { fail: 'handler timeout' }
+        return { adapter: 'handler timeout' }
       }
       log(`GitHub delivery ${id} (${message.event}): handler threw ${errorSummary(error)}; failed`)
-      return { fail: 'handler error' }
+      return { adapter: 'handler error' }
     })
   try {
-    const decided = await Promise.race([outcome, timeout])
-    if (decided !== 'ack' && 'fail' in decided && decided.fail === 'handler timeout') {
-      log(`GitHub delivery ${id} (${message.event}): handler timeout; failed, handler aborted`)
-    }
-    return decided
+    const settled = await Promise.race([outcome, timeout])
+    return 'handler' in settled ? settled.handler : adapterFailure(settled.adapter, true)
   } finally {
     clearTimeout(timer)
   }
 }
+
+/** What the handler's run came to: its disposition, or a failure the adapter decides (a throw, a timeout). */
+type Settled = { handler: Disposition } | { adapter: string }

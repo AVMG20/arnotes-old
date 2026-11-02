@@ -830,6 +830,35 @@ export const githubDeliveries = pgTable(
 
 export type GithubDelivery = typeof githubDeliveries.$inferSelect
 
+// The GitHub deliveries that gave up, one row each (id = the delivery id). The consumer writes the row before it
+// copies the delivery to the failed queue; the PM reads and changes it. The payload is the signed body as received,
+// removed by the janitor after 30 days (payload null then); the metadata stays.
+export const githubDeliveryFailures = pgTable(
+  'github_delivery_failures',
+  {
+    id: text('id').primaryKey(),
+    deliveryId: text('delivery_id').notNull().unique(),
+    event: text('event').notNull(),
+    owner: text('owner'),
+    repo: text('repo'),
+    repoId: bigint('repo_id', { mode: 'number' }),
+    attempts: integer('attempts').notNull(),
+    class: text('class').notNull(),
+    reason: text('reason'),
+    payload: text('payload'),
+    firstSeenAt: bigint('first_seen_at', { mode: 'number' }).notNull(),
+    failedAt: bigint('failed_at', { mode: 'number' }).notNull(),
+    state: text('state').notNull().default('failed'),
+    retriedCount: integer('retried_count').notNull().default(0),
+    handledBy: text('handled_by'),
+    handledAt: bigint('handled_at', { mode: 'number' }),
+    handledReason: text('handled_reason')
+  },
+  table => [index('github_delivery_failures_state_idx').on(table.state), index('github_delivery_failures_failed_at_idx').on(table.failedAt)]
+)
+
+export type GithubDeliveryFailure = typeof githubDeliveryFailures.$inferSelect
+
 // Automation rules for a project. trigger, conditions and actions are JSON
 // documents whose shape is validated by the rule model, not by the database.
 export const projectRules = pgTable(

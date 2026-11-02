@@ -16,7 +16,9 @@ import {
 } from '../server/utils/githubCards'
 import type { CardPatch, CardTask, DeliveryJob, GithubCardStore, IgnoredIssue, NewIssueCard, SyncedRepo } from '../server/utils/githubCards'
 import { makeDatabaseCardStore } from '../server/utils/githubCardStore'
-import { forgetPerMinuteWarning, perMinuteFromEnv, RepoAcceptLimit, useDeliveryQueue } from '../server/utils/githubDeliveryQueue'
+import { forgetPerMinuteWarning, perMinuteFromEnv, RepoAcceptLimit } from '../server/utils/githubDeliveryLimit'
+import { closeDeliveryQueue, getDeliveryQueue } from '../server/utils/githubDeliveryQueue'
+import type { MemoryDeliveryQueue } from '../server/utils/githubDeliveryQueueMemory'
 import webhook from '../server/api/github/webhook.post'
 
 const NOW = 1_800_000_000_000
@@ -818,77 +820,87 @@ test('the route answers 202, not handled, to a signed event it does not read', a
   })
 })
 
+// The queue the route publishes to: the in-memory one, given NODE_ENV test (or the missing broker, given production).
+async function withQueueEnv(nodeEnv: string, run: () => Promise<void>) {
+  const saved = { nodeEnv: process.env.NODE_ENV, url: process.env.RABBITMQ_URL }
+  process.env.NODE_ENV = nodeEnv
+  delete process.env.RABBITMQ_URL
+  await closeDeliveryQueue()
+  try {
+    await run()
+  } finally {
+    await closeDeliveryQueue()
+    if (saved.nodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = saved.nodeEnv
+    if (saved.url === undefined) delete process.env.RABBITMQ_URL
+    else process.env.RABBITMQ_URL = saved.url
+  }
+}
+
 test('a synced delivery over the per-minute limit is answered 429 with Retry-After, and the second one is not queued', async () => {
   const saved = process.env.GITHUB_DELIVERY_PER_MINUTE
-  const queued: DeliveryJob[] = []
   process.env.GITHUB_DELIVERY_PER_MINUTE = '1'
-  useDeliveryQueue({
-    enqueue: async (job) => {
-      queued.push(job)
-    }
-  })
   try {
-    await withSecret(async () => {
-      // A repository name no other test uses, so the one-a-minute window starts empty.
-      const payload = fixture('issues-opened', (p) => {
-        p.repository.full_name = 'example-owner/limit-test'
+    await withQueueEnv('test', async () => {
+      await withSecret(async () => {
+        // A repository name no other test uses, so the one-a-minute window starts empty.
+        const payload = fixture('issues-opened', (p) => {
+          p.repository.full_name = 'example-owner/limit-test'
+        })
+        const body = JSON.stringify(payload)
+        const queue = getDeliveryQueue() as MemoryDeliveryQueue
+        const first = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues', 'x-github-delivery': 'd-first' }, [body])
+        assert.equal((await (webhook as any)(first)).handled, true)
+        assert.equal(queue.peek('main').length, 1)
+        const second = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues', 'x-github-delivery': 'd-429' }, [body])
+        assert.equal(await refusal((webhook as any)(second)), 429)
+        assert.equal(String((second.node.res as { sent: Record<string, string | number> }).sent['retry-after']), '60')
+        assert.equal(queue.peek('main').length, 1)
       })
-      const body = JSON.stringify(payload)
-      const first = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues', 'x-github-delivery': 'd-first' }, [body])
-      assert.equal((await (webhook as any)(first)).handled, true)
-      assert.equal(queued.length, 1)
-      const second = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues', 'x-github-delivery': 'd-429' }, [body])
-      assert.equal(await refusal((webhook as any)(second)), 429)
-      assert.equal(String((second.node.res as { sent: Record<string, string | number> }).sent['retry-after']), '60')
-      assert.equal(queued.length, 1)
     })
   } finally {
-    useDeliveryQueue(null)
     if (saved === undefined) delete process.env.GITHUB_DELIVERY_PER_MINUTE
     else process.env.GITHUB_DELIVERY_PER_MINUTE = saved
   }
 })
 
-test('a synced delivery the queue cannot take is answered 503, so GitHub can redeliver it', async () => {
-  useDeliveryQueue({
-    enqueue: async () => {
-      throw new Error('broker down')
-    }
-  })
-  try {
+test('a synced delivery the queue cannot take (no RABBITMQ_URL in production) is answered 503, so GitHub can redeliver it', async () => {
+  await withQueueEnv('production', async () => {
     await withSecret(async () => {
       const body = JSON.stringify(fixture('issues-opened'))
       const event = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues', 'x-github-delivery': 'd-503' }, [body])
       assert.equal(await refusal((webhook as any)(event)), 503)
     })
-  } finally {
-    useDeliveryQueue(null)
-  }
+  })
 })
 
-test('a synced delivery is handed to the queue with its job, and answered 202 after the queue took it', async () => {
-  const queued: DeliveryJob[] = []
-  useDeliveryQueue({
-    enqueue: async (job) => {
-      queued.push(job)
-    }
-  })
-  try {
+test('a synced delivery is published to main with its id and attempt 0, and answered 202 after the queue confirmed it', async () => {
+  await withQueueEnv('test', async () => {
     await withSecret(async () => {
       const body = JSON.stringify(fixture('issue-comment-echo'))
       const event = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issue_comment', 'x-github-delivery': 'd-route' }, [body])
       const result = await (webhook as any)(event)
       assert.deepEqual(result, { ok: true, handled: true })
       assert.equal((event.node.res as { statusCode: number }).statusCode, 202)
+      const queued = (getDeliveryQueue() as MemoryDeliveryQueue).peek('main')
       assert.equal(queued.length, 1)
       assert.equal(queued[0]!.deliveryId, 'd-route')
-      assert.equal(queued[0]!.repoId, 2000000001)
-      assert.equal(queued[0]!.repoOwner, 'example-owner')
+      assert.equal(queued[0]!.event, 'issue_comment')
       assert.equal(queued[0]!.attempt, 0)
+      assert.equal(queued[0]!.body, body)
     })
-  } finally {
-    useDeliveryQueue(null)
-  }
+  })
+})
+
+test('a handled delivery with no delivery id is answered 400, and nothing is queued', async () => {
+  await withQueueEnv('test', async () => {
+    await withSecret(async () => {
+      const body = JSON.stringify(fixture('issues-opened'))
+      const event = routeEvent({ 'x-hub-signature-256': signed(body), 'x-github-event': 'issues' }, [body])
+      assert.equal(await refusal((webhook as any)(event)), 400)
+      assert.equal((getDeliveryQueue() as MemoryDeliveryQueue).peek('main').length, 0)
+    })
+  })
 })
 
 // The route tests reach the database through the link refresh. Ending the pool lets the run finish.

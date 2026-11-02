@@ -245,6 +245,12 @@ export function createAmqpDeliveryQueue(options: AmqpQueueOptions): AmqpDelivery
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
   }
 
+  /** The broker's delivery count (quorum queues, header x-delivery-count): 1 on the first hand-out. */
+  function deliveriesOf(headers: unknown): number {
+    const value = (headers as { 'x-delivery-count'?: unknown } | undefined)?.['x-delivery-count']
+    return (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0) + 1
+  }
+
   /** Publishes with confirm. Used by publish() and by the disposition of a consumed delivery. */
   async function send(queue: DeliveryQueueName, message: QueueMessage, reason?: string): Promise<void> {
     const broker = await ready()
@@ -296,6 +302,7 @@ export function createAmqpDeliveryQueue(options: AmqpQueueOptions): AmqpDelivery
 
     async consume(onMessage: ConsumeHandler, options: ConsumeOptions) {
       if (options.prefetch !== 1) throw new RangeError('prefetch must be 1')
+      if (typeof options.beforeFail !== 'function') throw new TypeError('beforeFail is required')
       const timeoutMs = options.handlerTimeoutMs ?? DEFAULT_HANDLER_TIMEOUT_MS
       const broker = await ready()
       // The handler's disposition stands for the delivery: the client acks or requeues the delivery when this
@@ -332,10 +339,11 @@ export function createAmqpDeliveryQueue(options: AmqpQueueOptions): AmqpDelivery
           event: message.type ?? '',
           attempt: attemptOf(message.headers),
           body: message.rawBody,
-          redelivered: message.redelivered
+          redelivered: message.redelivered,
+          deliveries: deliveriesOf(message.headers)
         }
         lastId = cutReason(handed.deliveryId) || '(no id)'
-        void decide(onMessage, handed, { timeoutMs, maxBodyBytes: MAX_BODY_BYTES }, log)
+        void decide(onMessage, handed, { timeoutMs, maxBodyBytes: MAX_BODY_BYTES, beforeFail: options.beforeFail }, log)
           .then(disposition => settleWith(disposition, handed))
           .then(settle, () => settle(ConsumerStatus.REQUEUE))
       }))

@@ -1,8 +1,9 @@
 import { createError, defineEventHandler, getHeader, getRequestWebStream, setResponseHeader, setResponseStatus } from 'h3'
 import { refreshForEvent } from '../../utils/githubSync'
 import { readCappedBody, repositoryOf, signatureMatches } from '../../utils/githubCards'
-import type { DeliveryJob } from '../../utils/githubCards'
-import { deliveryQueue, repoAcceptLimit } from '../../utils/githubDeliveryQueue'
+import { DeliveryTooLarge } from '../../utils/githubDeliveryQueueTypes'
+import { getDeliveryQueue } from '../../utils/githubDeliveryQueue'
+import { repoAcceptLimit } from '../../utils/githubDeliveryLimit'
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024
 
@@ -10,6 +11,18 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024
 const HANDLED_EVENTS = new Set(['issues', 'issue_comment', 'pull_request', 'check_run', 'workflow_run'])
 // The events the card syncer takes. Each is queued, and counted against the repository's per-minute limit.
 const SYNCED_EVENTS = new Set(['issues', 'issue_comment'])
+
+// The delivery id GitHub sends in X-GitHub-Delivery (a UUID): plain characters, at most 100.
+const DELIVERY_ID = /^[A-Za-z0-9-]{1,100}$/
+
+// A synced event with no repository is answered 202 and queued for nothing. Logged, at most once a minute.
+let lastNullRepositoryLog = 0
+function logNullRepository(deliveryId: string, name: string): void {
+  const now = Date.now()
+  if (now - lastNullRepositoryLog < 60_000) return
+  lastNullRepositoryLog = now
+  console.warn(`GitHub delivery ${deliveryId} (${name}) names no repository: answered 202, nothing queued`)
+}
 
 // GitHub posts here when something changes. The body is signed with the webhook
 // secret, so the signature is checked before a single field of it is read.
@@ -39,6 +52,10 @@ export default defineEventHandler(async (event) => {
     return { ok: true, handled: false }
   }
 
+  // GitHub always sends the delivery id: it is the message id and the primary key of the failed table, so it must be
+  // a plain id of at most 100 characters. Anything else is refused before it is stored.
+  if (!DELIVERY_ID.test(deliveryId)) throw createError({ statusCode: 400, message: 'The webhook delivery id is not valid' })
+
   let payload: unknown
   try {
     payload = JSON.parse(raw.toString('utf8'))
@@ -61,26 +78,17 @@ export default defineEventHandler(async (event) => {
   })
 
   if (repository) {
-    // The job is kept before the answer: if the queue cannot take it, GitHub is told 503 and retries.
-    const rawId = (payload as { repository?: { id?: unknown } }).repository?.id
-    const now = Date.now()
-    const job: DeliveryJob = {
-      deliveryId,
-      event: name,
-      repoOwner: repository.owner,
-      repoName: repository.repo,
-      repoId: typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0 ? rawId : 0,
-      payload,
-      receivedAt: now,
-      firstSeenAt: now,
-      attempt: 0
-    }
+    // The delivery is queued before the answer: GitHub is told 202 only once the broker confirmed it. If the queue
+    // cannot take it, GitHub is told 503 and redelivers. A body the queue will not take is 413, never dropped.
     try {
-      await deliveryQueue().enqueue(job)
+      await getDeliveryQueue().publish('main', { deliveryId, event: name, attempt: 0, body: raw })
     } catch (error) {
-      console.error(`GitHub delivery ${deliveryId || '(no id)'} (${name}) could not be queued (${error instanceof Error ? error.name : 'non-Error'}); answered 503`)
+      if (error instanceof DeliveryTooLarge) throw createError({ statusCode: 413, message: 'The webhook body is too large' })
+      console.error(`GitHub delivery ${deliveryId} (${name}) could not be queued (${error instanceof Error ? error.name : 'non-Error'}); answered 503`)
       throw createError({ statusCode: 503, message: 'The delivery could not be taken; redeliver it' })
     }
+  } else if (SYNCED_EVENTS.has(name)) {
+    logNullRepository(deliveryId, name)
   }
   setResponseStatus(event, 202)
   return { ok: true, handled: true }
