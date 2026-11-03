@@ -246,7 +246,7 @@ async function remove(person: ProjectPerson) {
         </p>
       </div>
       <p v-else>
-        To share a project with others, join a team: open the team switcher at the bottom left and choose Join Team with Code.
+        To share a project with others, join a team: open the team switcher at the bottom left and choose Join a team with a code.
       </p>
     </div>
 
