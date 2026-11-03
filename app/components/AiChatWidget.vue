@@ -146,11 +146,11 @@ function openTarget(m: ChatMessage) {
   <button
     v-if="!open"
     class="fixed bottom-5 right-5 z-60 flex size-10 cursor-pointer items-center justify-center rounded-full border border-primary/30 bg-elevated text-primary shadow-md transition-all hover:border-primary/60 hover:bg-primary/10 active:scale-95 max-lg:bottom-20"
-    aria-label="Open Arnai chat"
+    aria-label="Open Sprocket chat"
     @click="toggle"
   >
     <UIcon
-      name="i-lucide-sparkles"
+      name="i-lucide-cog"
       class="size-4.5"
     />
   </button>
@@ -168,13 +168,13 @@ function openTarget(m: ChatMessage) {
     <div class="flex shrink-0 items-center gap-2.5 border-b border-default/60 px-4 py-2.5">
       <div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
         <UIcon
-          name="i-lucide-sparkles"
+          name="i-lucide-cog"
           class="size-4"
         />
       </div>
       <div class="min-w-0 flex-1">
         <p class="text-sm font-semibold leading-tight text-default">
-          Arnai
+          Sprocket
         </p>
         <p class="truncate text-xs leading-tight text-muted">
           {{ openrouterModel }}
@@ -236,15 +236,15 @@ function openTarget(m: ChatMessage) {
       >
         <div class="mb-2 flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary">
           <UIcon
-            name="i-lucide-sparkles"
+            name="i-lucide-cog"
             class="size-5"
           />
         </div>
         <p class="text-sm font-medium text-default">
-          Hi, I'm Arnai
+          Hi, I'm Sprocket
         </p>
         <p class="text-xs text-muted">
-          Search your boards, or ask me to create and manage tasks for you.
+          I keep an eye on your boards. Ask me to find, plan or tidy up your tasks.
         </p>
 
         <div
@@ -410,7 +410,7 @@ function openTarget(m: ChatMessage) {
           v-model="input"
           rows="1"
           placeholder="Ask about your boards…"
-          aria-label="Message Arnai"
+          aria-label="Message Sprocket"
           class="max-h-40 min-h-[1.5rem] flex-1 resize-none bg-transparent text-sm text-default outline-none placeholder:text-muted"
           @keydown="onInputKeydown"
           @input="autoGrow"

@@ -6,7 +6,7 @@ import { trimHistory, toProviderMessages } from '../utils/chatHistory'
 import type { WireMessage, WireToolCall } from '../utils/chatHistory'
 import { DEFAULT_OPENROUTER_MODEL } from '../utils/ai'
 
-// Chat endpoint for the Arnai assistant. Streams NDJSON events to the client:
+// Chat endpoint for the Sprocket assistant. Streams NDJSON events to the client:
 //   { type: 'delta', text }              — assistant text chunk
 //   { type: 'reasoning', text }          — thinking token chunk (when enabled)
 //   { type: 'tool_progress', calls }     — tool arguments still being written

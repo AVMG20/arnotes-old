@@ -407,7 +407,7 @@ export function useAiChat() {
         // No tool has run yet this round and the history the server sees is
         // unchanged, so replaying is side-effect free. Clear the partial reply
         // so the retry does not append to half a sentence.
-        console.warn('[Arnai] Stream dropped, retrying round', { attempt, error })
+        console.warn('[Sprocket] Stream dropped, retrying round', { attempt, error })
         assistant.content = ''
         assistant.reasoning = ''
         assistant.toolProgress = undefined
