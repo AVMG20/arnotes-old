@@ -683,8 +683,8 @@ defineExpose({ handleEscape })
           :color="commentVisibility === 'internal' ? 'warning' : 'neutral'"
           variant="ghost"
           class="shrink-0"
-          :aria-label="commentVisibility === 'internal' ? 'Team only: click to share it with the customer' : 'Shared with customer: click to make it team only'"
-          :title="commentVisibility === 'internal' ? 'Team only: click to share it with the customer' : 'Shared with customer: click to make it team only'"
+          :aria-label="commentVisibility === 'internal' ? 'Team only. Click to share with the customer.' : 'Shared with the customer. Click to make it team only.'"
+          :title="commentVisibility === 'internal' ? 'Team only. Click to share with the customer.' : 'Shared with the customer. Click to make it team only.'"
           @click.stop="commentVisibility = commentVisibility === 'internal' ? 'customer' : 'internal'"
         />
         <UButton

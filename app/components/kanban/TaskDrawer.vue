@@ -586,7 +586,7 @@ const menuItems = computed(() => [[
             :label="taskInternal ? 'Team only' : 'Shared with customer'"
             :title="taskInternal
               ? 'Team only. Click to share with the customer.'
-              : `Shared with the customer, and on the board's public link when the board is shared. Click to make it team only.`"
+              : 'Shared with the customer. Click to make it team only.'"
             @click="toggleTaskVisibility"
           />
 
