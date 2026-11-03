@@ -1,16 +1,53 @@
 <script setup lang="ts">
 import { relativeTime } from '~/composables/useRelativeTime'
 import type { Project } from '~/composables/useProjects'
+import type { PinnedBoard } from '~/composables/usePins'
 import { taskCountLabel } from '#shared/utils/board'
 
 const { ready, projects, allTasks, deleteProject, renameProject } = useProjects()
 const route = useRoute()
 const { unread: inboxUnread } = useNotifications()
+const { pins, pinsLoaded, loadPins, isPinned, pinBoard, unpinBoard } = usePins()
+const { activeTeamId } = useTeams()
+const { switchWorkspace } = useWorkspace()
+const toast = useToast()
 
 const activeId = computed(() => (route.params.id as string | undefined) ?? null)
 
 function openProject(id: string) {
   if (route.path !== `/projects/${id}`) navigateTo(`/projects/${id}`)
+}
+
+// ─── Pins ──────────────────────────────────────────────────
+// Pins come from every workspace. A board in the open workspace shows its live name from
+// the project list; one elsewhere shows the name it had when the list was last loaded.
+
+onMounted(() => {
+  if (!pinsLoaded.value) loadPins().catch(() => {})
+})
+// A team switch can add or drop a membership's boards (joining, leaving), so reload then.
+watch(activeTeamId, () => loadPins().catch(() => {}))
+
+function pinName(pin: PinnedBoard) {
+  return projects.value.find(p => p.id === pin.projectId)?.name ?? pin.name
+}
+
+function pinPlace(pin: PinnedBoard) {
+  return [pin.teamName ?? 'Personal Workspace', pin.customerName].filter(Boolean).join(' · ')
+}
+
+// A board in another workspace switches to it first, as the team switcher does, then opens it.
+async function openPin(pin: PinnedBoard) {
+  await switchWorkspace(pin.teamId)
+  await navigateTo(`/projects/${pin.projectId}`)
+}
+
+async function togglePin(projectId: string) {
+  try {
+    await (isPinned(projectId) ? unpinBoard(projectId) : pinBoard(projectId))
+  } catch {
+    toast.add({ title: 'Could not change the pin', color: 'error' })
+  }
 }
 
 // Project creation lives on one surface only: /projects?new=1.
@@ -65,7 +102,10 @@ async function commitRename(project: { id: string, name: string }) {
   const id = renamingId.value
   const name = renameValue.value.trim()
   renamingId.value = null
-  if (id && name && name !== project.name) await renameProject(id, name)
+  if (id && name && name !== project.name) {
+    await renameProject(id, name)
+    if (isPinned(id)) loadPins().catch(() => {})
+  }
 }
 
 const WORKSPACE_LINKS = [
@@ -86,11 +126,20 @@ async function confirmDelete() {
   deleteTarget.value = null
   if (!target) return
   await deleteProject(target.id)
+  if (isPinned(target.id)) loadPins().catch(() => {})
   if (activeId.value === target.id) navigateTo('/projects')
 }
 
-function menuItems(project: { id: string, name: string }) {
-  return [[
+// Anyone may pin a board they can open; a customer's board is the organisation's to rename or delete.
+function menuItems(project: Project) {
+  const pinned = isPinned(project.id)
+  const pin = [{
+    label: pinned ? 'Unpin' : 'Pin to sidebar',
+    icon: pinned ? 'i-lucide-pin-off' : 'i-lucide-pin',
+    onSelect: () => togglePin(project.id)
+  }]
+  if (project.audience === 'customer') return [pin]
+  return [pin, [
     { label: 'Rename', icon: 'i-lucide-pencil', onSelect: () => startRename(project) }
   ], [
     {
@@ -130,6 +179,44 @@ function menuItems(project: { id: string, name: string }) {
     </nav>
 
     <RunningTimer />
+
+    <template v-if="pins.length">
+      <div class="px-2 pb-1">
+        <span class="text-xs font-semibold uppercase tracking-wider text-dimmed">Pinned</span>
+      </div>
+      <div
+        v-for="pin in pins"
+        :key="pin.projectId"
+        class="group flex cursor-pointer items-start gap-2 rounded-lg px-2.5 py-1.5 transition-colors"
+        :class="activeId === pin.projectId ? 'bg-elevated' : 'hover:bg-elevated/60'"
+        data-pinned-board
+        @click="openPin(pin)"
+      >
+        <UIcon
+          name="i-lucide-pin"
+          class="mt-0.5 size-4 shrink-0"
+          :class="activeId === pin.projectId ? 'text-primary' : 'text-dimmed group-hover:text-muted'"
+        />
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm font-medium leading-snug text-default">
+            {{ pinName(pin) }}
+          </p>
+          <p class="truncate text-xs text-muted">
+            {{ pinPlace(pin) }}
+          </p>
+        </div>
+        <UButton
+          icon="i-lucide-pin-off"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+          class="mt-0.5 shrink-0 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          :aria-label="`Unpin ${pinName(pin)}`"
+          @click.stop="togglePin(pin.projectId)"
+        />
+      </div>
+      <div class="mb-2 border-b border-default pb-2" />
+    </template>
 
     <div class="flex items-center justify-between px-2 pb-1">
       <span class="text-xs font-semibold uppercase tracking-wider text-dimmed">Projects</span>
@@ -191,10 +278,8 @@ function menuItems(project: { id: string, name: string }) {
             {{ project.customerName ? `${project.customerName} · ` : '' }}{{ relativeTime(project.updatedAt) }} · {{ countLabel(project) }} {{ countsFor(project).total === 1 ? 'task' : 'tasks' }}
           </p>
         </div>
-        <!-- The menu keeps its slot even when invisible, so rows never jump on hover.
-             A customer's board is the organisation's to rename or delete. -->
+        <!-- The menu keeps its slot even when invisible, so rows never jump on hover. -->
         <UDropdownMenu
-          v-if="project.audience !== 'customer'"
           :items="menuItems(project)"
           :content="{ align: 'start', collisionPadding: 12 }"
         >

@@ -239,6 +239,18 @@ export const projects = pgTable(
   ]
 )
 
+// A person's own pinned boards, shown in the sidebar whichever workspace is open, so a
+// board in another team is one click away. A pin is personal: nobody else sees it.
+export const boardPins = pgTable(
+  'board_pins',
+  {
+    userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+    projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [primaryKey({ columns: [table.userId, table.projectId] })]
+)
+
 export type Project = typeof projects.$inferSelect
 export type NewProject = typeof projects.$inferInsert
 
@@ -428,6 +440,9 @@ export const notifications = pgTable(
     type: text('type').$type<NotificationType>().notNull(),
     projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
     taskId: text('task_id').references(() => projectTasks.id, { onDelete: 'cascade' }),
+    // For a message or a reply: the conversation it belongs to (the first message), so the
+    // inbox opens that conversation.
+    messageId: text('message_id').references((): AnyPgColumn => projectMessages.id, { onDelete: 'cascade' }),
     actorId: text('actor_id').references(() => user.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     body: text('body').notNull().default(''),

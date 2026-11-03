@@ -2,8 +2,10 @@
 import { relativeTime } from '~/composables/useRelativeTime'
 
 // The project's conversations: post a message, answer one, and read them newest
-// first. Replies stay under the message they answer.
-const props = defineProps<{ projectId: string }>()
+// first. Replies stay under the message they answer. With a threadId it shows that one
+// conversation, its reply box open: what the inbox and a mailed link open.
+const props = defineProps<{ projectId: string, threadId?: string | null }>()
+const emit = defineEmits<{ showAll: [] }>()
 
 interface Message {
   id: string
@@ -21,7 +23,7 @@ const messages = useProjectCollection<Message>(() => props.projectId, 'messages'
 
 const threads = computed(() =>
   messages.items.value
-    .filter(message => !message.parentId)
+    .filter(message => !message.parentId && (!props.threadId || message.id === props.threadId))
     .sort((a, b) => b.createdAt - a.createdAt)
     .map(message => ({ message, replies: messages.items.value.filter(reply => reply.parentId === message.id) }))
 )
@@ -65,6 +67,15 @@ function openReply(id: string) {
   replyError.value = ''
 }
 
+// One conversation is opened to be answered, so its reply box starts open.
+watch(() => props.threadId, (id) => {
+  if (id) {
+    replyingTo.value = id
+    replyBody.value = ''
+    replyError.value = ''
+  }
+}, { immediate: true })
+
 async function sendReply(parentId: string) {
   if (!replyBody.value.trim() || replyPosting.value) return
   replyPosting.value = true
@@ -90,7 +101,18 @@ async function removeMessage(id: string, isThread: boolean) {
 <template>
   <div class="h-full overflow-y-auto px-4 pb-10 pt-4 lg:px-6">
     <div class="mx-auto max-w-3xl">
+      <UButton
+        v-if="threadId"
+        label="All messages"
+        icon="i-lucide-arrow-left"
+        size="xs"
+        color="neutral"
+        variant="ghost"
+        data-msg-all
+        @click="emit('showAll')"
+      />
       <form
+        v-else
         class="rounded-xl border border-default bg-default p-3"
         data-msg-composer
         @submit.prevent="post"
@@ -137,7 +159,10 @@ async function removeMessage(id: string, isThread: boolean) {
         </p>
       </form>
 
-      <ul class="mt-5 space-y-4">
+      <ul
+        class="space-y-4"
+        :class="threadId ? 'mt-3' : 'mt-5'"
+      >
         <li
           v-for="{ message, replies } in threads"
           :key="message.id"
@@ -283,7 +308,7 @@ async function removeMessage(id: string, isThread: boolean) {
           v-if="!threads.length && !messages.loading.value"
           class="rounded-xl border border-dashed border-default px-4 py-10 text-center text-sm text-muted"
         >
-          No conversations yet. Post the first message above.
+          {{ threadId ? 'This conversation was deleted.' : 'No conversations yet. Post the first message above.' }}
         </li>
       </ul>
     </div>

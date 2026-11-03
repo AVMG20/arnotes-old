@@ -565,6 +565,8 @@ useSeoMeta({
         <KanbanProjectMessagesView
           v-else-if="view === 'messages'"
           :project-id="projectId"
+          :thread-id="typeof route.query.message === 'string' ? route.query.message : null"
+          @show-all="navigateTo({ query: { ...route.query, message: undefined } }, { replace: true })"
         />
         <KanbanProjectTimeView
           v-else-if="view === 'time'"

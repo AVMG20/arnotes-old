@@ -46,9 +46,53 @@ function dayLabel(day: string) {
   return format(dueDayToMs(day), 'EEEE, MMM d')
 }
 
+// ─── The open item ─────────────────────────────────────────
+// An item opens over the inbox, the way it opens on its board: a task in the task panel, a
+// message in its conversation with the reply box ready. A board in another workspace switches
+// there first, as a pinned board does.
+
+const { board, loadBoard } = useProjects()
+const { switchToBoard } = useWorkspace()
+const toast = useToast()
+
+const openTaskId = ref<string | null>(null)
+const drawerTask = computed(() => (openTaskId.value ? board.value?.tasks.find(t => t.id === openTaskId.value) ?? null : null))
+// threadId null shows the board's whole conversation list: older notifications did not keep the message.
+const openThread = ref<{ projectId: string, projectName: string, threadId: string | null } | null>(null)
+const opening = ref<string | null>(null)
+
+function isOpen(item: NotificationItem) {
+  return opening.value === item.id
+    || (Boolean(item.taskId) && openTaskId.value === item.taskId)
+    || (Boolean(item.messageId) && openThread.value?.threadId === item.messageId)
+}
+
 async function open(item: NotificationItem) {
   if (!item.readAt) markRead([item.id])
-  await navigateTo(notificationLink(item))
+  if (opening.value) return
+  opening.value = item.id
+  try {
+    if (!(await switchToBoard(item.projectId))) {
+      toast.add({ title: 'This board is not available to you any more', color: 'warning' })
+      return
+    }
+    if (item.taskId) {
+      await loadBoard(item.projectId)
+      if (!board.value?.tasks.some(t => t.id === item.taskId)) {
+        toast.add({ title: 'That task is no longer on the board', color: 'warning' })
+        return
+      }
+      openTaskId.value = item.taskId
+    } else if (item.type === 'message' || item.type === 'reply') {
+      openThread.value = { projectId: item.projectId, projectName: item.projectName, threadId: item.messageId ?? null }
+    } else {
+      await navigateTo(notificationLink(item))
+    }
+  } catch {
+    toast.add({ title: 'Could not open it', color: 'error' })
+  } finally {
+    opening.value = null
+  }
 }
 
 function selectTab(tab: 'inbox' | 'agent') {
@@ -292,6 +336,7 @@ async function sendTest() {
                 v-for="item in dayItems"
                 :key="item.id"
                 class="flex cursor-pointer items-start gap-3 border-b border-default px-3 py-3 transition-colors last:border-b-0 hover:bg-elevated/60"
+                :class="isOpen(item) ? 'bg-elevated/60' : ''"
                 :data-inbox-item="item.type"
                 :data-unread="item.readAt ? 'false' : 'true'"
                 @click="open(item)"
@@ -408,5 +453,28 @@ async function sendTest() {
         </template>
       </div>
     </div>
+
+    <KanbanTaskDrawer
+      :task="drawerTask"
+      @close="openTaskId = null"
+    />
+
+    <USlideover
+      :open="openThread !== null"
+      :title="openThread?.projectName ?? ''"
+      description="Messages"
+      :ui="{ content: 'max-w-2xl', body: 'p-0 sm:p-0' }"
+      data-inbox-thread
+      @update:open="(value: boolean) => { if (!value) openThread = null }"
+    >
+      <template #body>
+        <KanbanProjectMessagesView
+          v-if="openThread"
+          :project-id="openThread.projectId"
+          :thread-id="openThread.threadId"
+          @show-all="openThread = { ...openThread, threadId: null }"
+        />
+      </template>
+    </USlideover>
   </div>
 </template>

@@ -17,6 +17,8 @@ interface NotifyInput {
   project: { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
   /** Set when the notification is about one task: a customer's contact is told only about tasks they can see. */
   task?: { id: string, title: string, visibility: 'internal' | 'customer' }
+  /** For a message or a reply: the conversation's first message, which the inbox opens. */
+  messageId?: string
   actorId: string | null
   type: NotificationType
   recipients: string[]
@@ -33,6 +35,13 @@ export function notificationExcerpt(text: string): string {
 
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', '\'': '&#39;' })[ch]!)
+}
+
+/** Where a mail or a push leads: the task, the conversation, or the board. Matches notificationLink in the app. */
+function pathOf(input: NotifyInput): string {
+  if (input.task) return `/projects/${input.project.id}?task=${input.task.id}`
+  if (input.messageId) return `/projects/${input.project.id}?view=messages&message=${input.messageId}`
+  return `/projects/${input.project.id}`
 }
 
 function appUrl(path: string): string {
@@ -62,6 +71,7 @@ export async function notify(input: NotifyInput): Promise<number> {
     type: input.type,
     projectId: input.project.id,
     taskId: input.task?.id ?? null,
+    messageId: input.messageId ?? null,
     actorId: input.actorId,
     title: input.title,
     body: input.body ?? '',
@@ -88,7 +98,7 @@ async function sendCopies(rows: { id: string, userId: string }[], input: NotifyI
         eq(notificationPreferences.email, true)
       ))
 
-    const link = appUrl(`/projects/${input.project.id}${input.task ? `?task=${input.task.id}` : ''}`)
+    const link = appUrl(pathOf(input))
     const body = input.body ?? ''
     for (const person of wanting) {
       const row = rows.find(candidate => candidate.userId === person.userId)!
@@ -112,7 +122,7 @@ async function sendPushes(rows: { id: string, userId: string }[], input: NotifyI
   try {
     const devices = await db.select().from(pushSubscriptions)
       .where(inArray(pushSubscriptions.userId, rows.map(row => row.userId)))
-    const url = `/projects/${input.project.id}${input.task ? `?task=${input.task.id}` : ''}`
+    const url = pathOf(input)
     await Promise.all(devices.map(async (device) => {
       const row = rows.find(candidate => candidate.userId === device.userId)!
       const result = await sendPush(device, { title: input.title, body: input.body ?? '', url, tag: row.id })

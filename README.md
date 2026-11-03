@@ -25,6 +25,8 @@ Taskmanager is a self-hosted project manager for an agency and its customers: or
 - Project Settings for the team: General (owner, archive and delete), Repositories (several linked GitHub repositories, one default), Rules and Custom fields
 - Automation rules per project: a trigger, conditions and actions, with a run log, and loop protection
 - Live updates, so a change made by an AI agent, a teammate, or another tab shows up without a reload — on shared links too
+- Pinned boards: pin any board you can open, from any of your organisations, and it stays in your sidebar whichever workspace is open; clicking it switches to its workspace and opens it. Pins are personal
+- An inbox that opens each item in place: a task in its task panel, a message in its conversation with the reply box ready, switching to the item's workspace when it lives in another one
 - Built-in MCP server so Claude Code and other AI agents can read and manage your boards, using API keys you scope yourself
 - Crews: agent teams made through the crew API, with an instance-admin Crews page; see [Crew API](#crew-api)
 - Installable Progressive Web App

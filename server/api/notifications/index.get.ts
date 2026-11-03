@@ -16,6 +16,7 @@ export default defineEventHandler(async (event) => {
       projectName: projects.name,
       taskId: notifications.taskId,
       taskTitle: projectTasks.title,
+      messageId: notifications.messageId,
       title: notifications.title,
       body: notifications.body,
       createdAt: notifications.createdAt,

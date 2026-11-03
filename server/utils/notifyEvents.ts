@@ -104,13 +104,14 @@ function namedIn(body: string, name: string): boolean {
  * reply goes to the people already in that conversation. The team's own talk is
  * never shown to a customer's contact.
  */
-export async function notifyMessage(project: Project, message: { title: string, body: string, parentId: string | null }, actorId: string | null) {
+export async function notifyMessage(project: Project, message: { id: string, title: string, body: string, parentId: string | null }, actorId: string | null) {
   const actor = await nameOf(actorId)
 
   if (!message.parentId) {
     const staff = (await projectPeople(project)).filter(person => person.kind === 'staff').map(person => person.id)
     await notify({
       project,
+      messageId: message.id,
       actorId,
       type: 'message',
       recipients: staff,
@@ -130,6 +131,7 @@ export async function notifyMessage(project: Project, message: { title: string, 
 
   await notify({
     project,
+    messageId: message.parentId,
     actorId,
     type: 'reply',
     recipients: [...(parent ? [parent.userId] : []), ...thread.map(reply => reply.userId)],

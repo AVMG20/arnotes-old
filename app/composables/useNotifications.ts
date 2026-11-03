@@ -8,6 +8,8 @@ export interface NotificationItem {
   projectName: string
   taskId: string | null
   taskTitle: string | null
+  /** For a message or a reply: the conversation's first message. Older notifications have none. */
+  messageId?: string | null
   title: string
   body: string
   createdAt: number
@@ -36,8 +38,9 @@ const announced = new Set<string>()
 let started = false
 
 /** Where a notification leads: the task it is about, or the conversation. */
-export function notificationLink(item: Pick<NotificationItem, 'type' | 'projectId' | 'taskId'>): string {
+export function notificationLink(item: Pick<NotificationItem, 'type' | 'projectId' | 'taskId' | 'messageId'>): string {
   if (item.taskId) return `/projects/${item.projectId}?task=${item.taskId}`
+  if (item.messageId) return `/projects/${item.projectId}?view=messages&message=${item.messageId}`
   if (item.type === 'message' || item.type === 'reply') return `/projects/${item.projectId}?view=messages`
   return `/projects/${item.projectId}`
 }
