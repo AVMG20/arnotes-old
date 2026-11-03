@@ -5,6 +5,7 @@ import { projectGithubRepos, VISIBILITIES, type ProjectGithubRepo, type Visibili
 import { parseBranches, parseColumnName, parseLogins, sharedBranch, sharedBranchMessage } from '#shared/utils/githubRepoSync'
 import { canManageRepoSync, columnNamesOf, recordRepoAudit, repoSyncView } from '../../../../../utils/githubRepoSync'
 import { routeStaffProject, touchProject } from '../../../../../utils/projectResources'
+import { catchUpDeliveryId, queueCatchUp, syncSettingsOf } from '../../../../../utils/githubCatchUp'
 
 // Changes one linked repository. `visibility` sets what new links to it get, and
 // staff may change it. The issue sync fields (on or off, the column and visibility
@@ -155,6 +156,16 @@ export default defineEventHandler(async (event) => {
     : [row]
 
   // Visibility keeps its old audit line too: it is a setting like the others.
+  // Switching issue sync on queues a catch-up of the open issues (GH5). A queue that cannot take it does not undo the
+  // switch: the owner can press "Catch up now" again.
+  if (patch.syncEnabled === true && !row.syncEnabled) {
+    try {
+      await queueCatchUp(updated!, catchUpDeliveryId(row.id, Date.now(), syncSettingsOf(updated!)))
+    } catch (error) {
+      console.error(`GitHub catch-up for ${fullName} could not be queued (${error instanceof Error ? error.name : 'non-Error'})`)
+    }
+  }
+
   await recordRepoAudit(project.id, fullName, userId, changes(row, updated!))
   await touchProject(event, project.id)
   return {

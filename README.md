@@ -591,6 +591,10 @@ Database structure is defined only in `server/db/schema.ts`. After changing it, 
 - A run that is killed (Ctrl-C, a CI timeout) leaks its `arnotes-test-*` vhosts. Delete them by hand: `rabbitmqctl list_vhosts` and `rabbitmqctl delete_vhost <name>`.
 - CI: run the same suite against a broker service container, `rabbitmq:4.3.1-management-alpine`, with `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS` and `RABBITMQ_DEFAULT_VHOST` set from CI secrets. Publish its port, export `RABBITMQ_URL` for that user (the path part is replaced by the test), and run the command under Node and under Bun.
 
+### Issue catch-up
+
+Switching issue sync on, or pressing "Catch up now" in Project Settings > Repositories, queues one `catch_up` job on the same queue. The consumer reads the repository's open issues (at most 200, in at most 10 pages of the list, pull requests skipped) and their comments (at most 50 per issue) from GitHub, and applies them with the same rules as a webhook delivery. Issues and comments by anyone else are not copied and do not change the ignored count. A catch-up has its own read budget per repository (120 reads a minute), separate from the tag reads (`GITHUB_TAG_READS_PER_MINUTE`). A second request while one is queued or running is answered "already queued". GitHub never sends `catch_up`; the webhook does not accept it.
+
 ## Architecture
 
 - Nuxt 4 and Vue 3 provide the client and Nitro API server.

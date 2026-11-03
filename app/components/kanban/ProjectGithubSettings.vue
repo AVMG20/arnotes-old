@@ -69,6 +69,9 @@ const confirmingId = ref('')
 const drafts = reactive<Record<string, Draft>>({})
 const stored = reactive<Record<string, Draft>>({})
 const syncError = reactive<Record<string, string>>({})
+// The last catch-up answer per repository, and the repository being queued.
+const catchUpNote = reactive<Record<string, string>>({})
+const catchingUp = ref('')
 // The refusal the server gave a form field, and the value it was given for. The words stay
 // by the field until the value changes.
 const serverRefusal = reactive<Record<string, { field: SyncField, message: string, value: string } | undefined>>({})
@@ -367,6 +370,27 @@ async function saveSync(row: LinkedRepo) {
     else syncError[row.id] = messageOf(e, 'Could not save the issue sync settings. Nothing was changed')
   } finally {
     busyId.value = ''
+  }
+}
+// Why the catch-up button is off, in words. Empty when it can be pressed.
+function catchUpReason(row: LinkedRepo): string {
+  if (!canManage.value) return 'Only the project owner and the team\'s owners and admins can run a catch-up.'
+  if (!stored[row.id]?.enabled) return 'Turn issue sync on and save first.'
+  if (catchingUp.value === row.id) return 'Queuing…'
+  return ''
+}
+
+async function catchUp(row: LinkedRepo) {
+  if (catchUpReason(row)) return
+  catchingUp.value = row.id
+  catchUpNote[row.id] = ''
+  try {
+    const result = await $fetch<{ queued: boolean, message: string }>(`${base.value}/repos/${row.id}/catchup`, { method: 'POST' })
+    catchUpNote[row.id] = result.message
+  } catch (e) {
+    catchUpNote[row.id] = messageOf(e, 'Could not queue the catch-up. Nothing was changed')
+  } finally {
+    catchingUp.value = ''
   }
 }
 </script>
@@ -742,6 +766,37 @@ async function saveSync(row: LinkedRepo) {
               >
                 {{ syncError[row.id] }}
               </p>
+              <div class="flex flex-wrap items-center gap-3 border-t border-default pt-4">
+                <button
+                  type="button"
+                  class="rounded-lg border border-default px-3 py-2 text-sm text-default hover:bg-elevated disabled:opacity-50"
+                  :disabled="!!catchUpReason(row)"
+                  :aria-describedby="catchUpReason(row) ? fieldId(row, 'catchup-reason') : undefined"
+                  data-github-sync-catchup
+                  @click="catchUp(row)"
+                >
+                  {{ catchingUp === row.id ? 'Queuing…' : 'Catch up now' }}
+                </button>
+                <p
+                  v-if="catchUpReason(row)"
+                  :id="fieldId(row, 'catchup-reason')"
+                  class="text-xs text-muted"
+                  data-github-sync-catchup-reason
+                >
+                  {{ catchUpReason(row) }}
+                </p>
+                <p
+                  v-if="catchUpNote[row.id]"
+                  class="basis-full text-xs text-muted"
+                  role="status"
+                  data-github-sync-catchup-result
+                >
+                  {{ catchUpNote[row.id] }}
+                </p>
+                <p class="basis-full text-xs text-muted">
+                  A catch-up reads the open issues from GitHub and makes cards for those by accepted logins that have none. It does not change the ignored count, which counts live events only.
+                </p>
+              </div>
             </form>
           </details>
         </li>

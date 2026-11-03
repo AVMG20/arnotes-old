@@ -8,6 +8,7 @@
 // The echo list and the per-issue ordering are in memory (see serialise): run one app instance.
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { ownerAllowed } from './githubAllow'
+import { CATCH_UP_EVENT, CatchUpAborted, CatchUpFailure, runCatchUp } from './githubCatchUp'
 
 // The only events the syncer reads. Other events keep their own handling in the webhook.
 export const SYNCED_EVENTS = ['issues', 'issue_comment'] as const
@@ -367,6 +368,17 @@ function derivedDeliveryId(job: DeliveryJob, number: number, action: string): st
 export async function processGithubDelivery(job: DeliveryJob, deps: DeliveryDeps): Promise<Outcome> {
   const { event, payload, receivedAt: now } = job
   if ((TAG_EVENTS as readonly string[]).includes(event)) return deps.tagWork ? deps.tagWork(job, deps.signal) : 'ignored'
+  // The catch-up (GH5): queued by the server, never sent by GitHub. It reads the open issues and applies each one
+  // through this same function, as a webhook delivery would.
+  if (event === CATCH_UP_EVENT) {
+    try {
+      return await runCatchUp(job, { store: deps.store, signal: deps.signal, apply: synthetic => processGithubDelivery(synthetic, deps) })
+    } catch (error) {
+      if (error instanceof CatchUpAborted) throw new DeliveryAborted()
+      if (error instanceof CatchUpFailure) throw new DeliveryError(error.kind, error.message)
+      throw error
+    }
+  }
   const store = guardStore(deps.store, deps.signal)
   if (!(SYNCED_EVENTS as readonly string[]).includes(event)) return 'ignored'
 
