@@ -22,6 +22,7 @@ crew.config.example.json
 crew.mjs
 fonts.conf.tmpl
 guard.sh
+home.mjs
 init.mjs
 listen.mjs
 package.json

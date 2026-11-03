@@ -11,15 +11,18 @@ export function crewKitCommands(origin: string): string {
   ].join('\n')
 }
 
-/** Written by the shell, so $HOME is the agent machine's own. `who` is the member's key. */
-export function crewChannelCommand(who = 'pm'): string {
+/**
+ * Written by the shell, so $HOME is the agent machine's own. `who` is the member's key; `home` is
+ * the crew's home folder, a folder of its own per crew.
+ */
+export function crewChannelCommand(who = 'pm', home = '$HOME/crew-home'): string {
   return `cat > .mcp.json <<EOF
 {
   "mcpServers": {
     "taskmanager-crew": {
       "command": "node",
       "args": ["$HOME/crew-kit/channel.mjs", "${who}"],
-      "env": { "CREW_HOME": "$HOME/crew-home" }
+      "env": { "CREW_HOME": "${home}" }
     }
   }
 }
@@ -54,9 +57,10 @@ fills it in every time it starts. If the variable is not set, stop and ask me to
 2. Install the crew kit and its skill:
 ${crewKitCommands(origin).split('\n').map(line => `   ${line}`).join('\n')}
 3. Read ~/crew-kit/README.md and take me through "A provisioned crew" if I want to run a crew.
-   The crew's home folder is ~/crew-home (CREW_HOME); creds.json goes there, never into a repository.
+   Each crew has a home folder of its own, ~/crew-home/<crew slug> (CREW_HOME); its creds.json goes
+   there, never into a repository.
 4. For crew channels, put a .mcp.json in the folder a crew member's session starts from, as the
-   README's "Channels" section shows, with the full paths of ~/crew-kit/channel.mjs and ~/crew-home.
+   README's "Channels" section shows, with the full paths of ~/crew-kit/channel.mjs and the crew's home folder.
 
 Ask me for anything you need, and never print the key or creds.json.`
 }

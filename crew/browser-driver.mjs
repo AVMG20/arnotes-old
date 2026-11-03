@@ -61,6 +61,7 @@ import net from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { crewHome } from './home.mjs'
 
 const SELF = fileURLToPath(import.meta.url)
 const KIT_DIR = dirname(SELF)
@@ -350,7 +351,7 @@ export function checkSendMethod(method) {
 export function shotRoots() {
   const list = process.env.CREW_BROWSER_SHOT_DIRS
     ? process.env.CREW_BROWSER_SHOT_DIRS.split(':').filter(Boolean)
-    : [join(process.env.CREW_HOME ? resolve(process.env.CREW_HOME) : KIT_DIR, 'work')]
+    : [join(crewHome(), 'work')]
   return list.flatMap((path) => {
     try {
       return [realpathSync(resolve(path))]
@@ -478,7 +479,7 @@ function isExecutable(file) {
 }
 
 function chromiumFromConfig() {
-  const home = process.env.CREW_HOME ? resolve(process.env.CREW_HOME) : KIT_DIR
+  const home = crewHome()
   for (const name of ['crew.json', 'crew.config.json']) {
     try {
       const path = JSON.parse(readFileSync(join(home, name), 'utf8')).chromium

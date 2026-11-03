@@ -11,6 +11,8 @@ agnostic: everything that belongs to one product lives in `crew.json` and
 `PROJECT-RULES.md`. The kit is served by Taskmanager (`/crew/kit.tar.gz`, `/crew/SKILL.md`). Board tool details are in the `taskmanager` skill (`/api/settings/skill`); do not repeat them here. Run the kit with `crew <who> <command>`, `crew listen`, `crew watch`.
 
 If the crew home (`$CREW_HOME`, or the kit folder when it is unset) is not set up yet, follow its `README.md` from step 1 and take the user through it.
+Each crew has a home folder of its own, such as `~/crew-home/<crew slug>`. When your session was not
+started with `CREW_HOME` set, prefix kit commands with it, as the commands in `PROMPTS.md` do.
 If it is, run `crew watch` to see where the run stands.
 
 ## Cast
@@ -49,9 +51,12 @@ Columns: Backlog, To do, In progress, **Verify**, **Ready for live**, **Done**, 
 
 ## Running it
 
-- **Launch** the agents with the prompts in `$CREW_HOME/PROMPTS.md` (`Agent`, `model: haiku`,
-  `run_in_background: true`). Order: PM first (plans), workers, then the code reviewer, then the
-  tester when there is a dev copy to browse.
+- **Launch** the agents with the prompts in `$CREW_HOME/PROMPTS.md` (`Agent`, `subagent_type` from
+  the table at its top, `model: haiku`, `run_in_background: true`). Order: PM first (plans), workers,
+  then the code reviewer, then the tester when there is a dev copy to browse. Each member is its own
+  agent type (`init.mjs` writes them), so you can tell them apart when you resume or stop one. On
+  "Agent type not found", restart Claude Code (`claude --continue`): never launch a member without
+  its `subagent_type`.
 - **Wake on hand-backs.** A background agent ends its turn after some minutes even when told to
   loop. Each hand-back wakes you: read the board (`crew watch`), then resume the agent
   (`SendMessage`) or move on. Do not read transcripts.

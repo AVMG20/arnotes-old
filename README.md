@@ -479,10 +479,10 @@ The simplest way to make a crew is **New crew** on the Crews page (`/admin/crews
 - download three files
 - check Node.js, Claude Code and the connection
 - install the kit and Chromium
-- put the files in `~/crew-home`
-- run `init.mjs`
+- put the files in the crew's own folder, `~/crew-home/<crew slug>`, so several crews can share one computer
+- run `init.mjs`, which also writes one Claude Code agent type per crew member (`<crew slug>-pia-planner` and so on), so Boss can tell them apart
 - check a worker's key
-- start the crew in one Claude Code window
+- start the crew: paste one message into the Claude Code session you already work in, which then acts as Boss next to its own work, or start a new session that is only Boss
 
 The setup can also be copied as one prompt for Claude Code. `creds.json` lives only in that page's memory, so leaving the page before downloading it means rotating the crew for new keys. The crew's work then comes from the board: a task assigned to the project manager is what she picks up.
 

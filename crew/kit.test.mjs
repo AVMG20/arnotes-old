@@ -14,12 +14,13 @@ import { execFile, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { randomBytes } from 'node:crypto'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { after, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { findChromium, request, serve } from './browser-driver.mjs'
 import { boardOrigin, signIn } from './browser.mjs'
+import { crewHome } from './home.mjs'
 
 const KIT = dirname(fileURLToPath(import.meta.url))
 const CREW = join(KIT, 'crew.mjs')
@@ -321,6 +322,69 @@ describe('a password goes only to the board', { skip: SKIP }, () => {
       await new Promise(resolve => board.close(resolve))
       await new Promise(resolve => other.close(resolve))
     }
+  })
+})
+
+describe('CREW_HOME and the agent types', () => {
+  // A launcher that sets CREW_HOME without a shell passes "~/..." on as it is.
+  test('a leading ~ is the home folder; anything else resolves as a path', () => {
+    assert.equal(crewHome('~'), homedir())
+    assert.equal(crewHome('~/crew-home/acme'), join(homedir(), 'crew-home/acme'))
+    assert.equal(crewHome('/srv/crew'), '/srv/crew')
+    assert.equal(crewHome('crew'), resolve('crew'))
+    assert.equal(crewHome(''), KIT)
+  })
+
+  // HOME is a scratch folder, so ~ and ~/.claude/agents land there and never in the real ones.
+  function crewIn(home) {
+    const dir = join(home, 'crew-home', 'acme')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'crew.json'), JSON.stringify({ team: 'Acme Crew', crew: { slug: 'acme' }, board: { url: 'http://127.0.0.1:9' } }))
+    return dir
+  }
+  const run = (home, script, crewHomeValue) => spawnSync(process.execPath, [join(KIT, script)], {
+    cwd: home, // not the kit folder, so a relative reading of "~/..." would land under it
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '', CREW_HOME: crewHomeValue }
+  })
+
+  test('a wrong CREW_HOME is named as given and as resolved', () => {
+    const home = mkdtempSync(join(SCRATCH, 'kit-home-'))
+    made.push(home)
+    const out = run(home, 'watch.mjs', '~/crew-home/nope')
+    assert.equal(out.status, 78)
+    assert.match(out.stderr, /CREW_HOME is "~\/crew-home\/nope", which resolves to \S+\/crew-home\/nope\./)
+  })
+
+  test('init writes one Haiku agent definition per member, named for the crew, and PROMPTS.md names them', () => {
+    const home = mkdtempSync(join(SCRATCH, 'kit-home-'))
+    made.push(home)
+    const dir = crewIn(home)
+    run(home, 'init.mjs', '~/crew-home/acme')
+    const agents = join(home, '.claude', 'agents')
+    assert.deepEqual(readdirSync(agents).sort(), [
+      'acme-log-watcher.md', 'acme-nina-nitpick.md', 'acme-pia-planner.md', 'acme-pietje-precies.md',
+      'acme-wade-worker.md', 'acme-wick-worker.md', 'acme-wren-worker.md', 'acme-wynn-worker.md'
+    ])
+    const pia = readFileSync(join(agents, 'acme-pia-planner.md'), 'utf8')
+    assert.match(pia, /^---\nname: acme-pia-planner\ndescription: ".+"\nmodel: haiku\n---\n/)
+    assert.ok(pia.includes(`CREW_HOME=${dir} node ${KIT}/`), 'the definition carries the resolved CREW_HOME')
+    const prompts = readFileSync(join(dir, 'PROMPTS.md'), 'utf8')
+    assert.match(prompts, /\| `w1` \| Wren Worker \| wren \| `acme-wren-worker` \|/)
+    assert.ok(prompts.includes(`CREW_HOME=${dir} node ${KIT}/listen.mjs pm 60`), 'commands carry CREW_HOME')
+  })
+
+  test('init never overwrites a definition it did not write', () => {
+    const home = mkdtempSync(join(SCRATCH, 'kit-home-'))
+    made.push(home)
+    crewIn(home)
+    const agents = join(home, '.claude', 'agents')
+    mkdirSync(agents, { recursive: true })
+    writeFileSync(join(agents, 'acme-wren-worker.md'), 'mine\n')
+    const out = run(home, 'init.mjs', '~/crew-home/acme')
+    assert.equal(readFileSync(join(agents, 'acme-wren-worker.md'), 'utf8'), 'mine\n')
+    assert.match(out.stdout, /FAIL \S+acme-wren-worker\.md exists and was not written by init/)
+    assert.equal(out.status, 1)
   })
 })
 

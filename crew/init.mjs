@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Step 1 of the setup. Checks what the crew needs, writes the documents the agents read
 // (CREW.md, PIETJE.md, NITPICKER.md, PIA-UX.md, PROMPTS.md, BRIEF.md, PROJECT-RULES.md) from their
-// *.tmpl files with the values of crew.config.json, and writes fonts.conf when a font
-// directory is given. Safe to run again: it overwrites generated documents (edit the
-// .tmpl, not the output) but never PROJECT-RULES.md or BRIEF.md once they exist.
+// *.tmpl files with the values of crew.json, writes fonts.conf when a font directory is given,
+// and writes one Claude Code agent definition per member into ~/.claude/agents. Safe to run
+// again: it overwrites generated documents (edit the .tmpl, not the output) but never
+// PROJECT-RULES.md or BRIEF.md once they exist.
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { execSync } from 'node:child_process'
-import { config, here, kitDir, templateValues } from './config.mjs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { CAST, agentNames, config, here, kitDir, templateValues } from './config.mjs'
 
 const ok = m => console.log(`  ok   ${m}`)
 const warn = m => console.log(`  WARN ${m}`)
@@ -71,8 +74,44 @@ for (const file of readdirSync(kitDir).filter(f => f.endsWith('.tmpl'))) {
   ok(`${out}${left ? `  (unfilled: ${[...new Set(left)].join(' ')})` : ''}`)
 }
 
+// One Claude Code agent type per member, so Boss launches and addresses each one by name. A file
+// without this crew's marker is someone else's and is never overwritten.
+console.log('\nAgent types')
+const agentsDir = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'agents')
+mkdirSync(agentsDir, { recursive: true })
+const DUTIES = {
+  pm: 'project manager. Plans the board, steers the workers, pre-checks Verify.',
+  w1: 'worker. Builds the tasks assigned to it on the board.',
+  pietje: 'usability tester. Tries the product as a first-time user and files [UX] findings for the PM.',
+  nitpicker: 'code quality reviewer. Reviews the diff of each task in Verify before Boss does.',
+  watcher: 'log watcher (optional). Reads the dev logs and reports what matters; changes nothing.'
+}
+for (const key of CAST) {
+  const name = agentNames[key]
+  const file = join(agentsDir, `${name}.md`)
+  const marker = `<!-- ${name}: written by the crew kit's init.mjs, which rewrites this file -->`
+  if (existsSync(file) && !readFileSync(file, 'utf8').includes(marker)) {
+    fail(`${file} exists and was not written by init for this crew: rename or remove it, then run init again`)
+    continue
+  }
+  const person = config.people[key]
+  const keyNote = key === 'watcher' ? '' : ` (key ${key})`
+  const description = `${person}${keyNote}, ${DUTIES[key] ?? DUTIES.w1} Crew "${config.team}", Taskmanager board "${config.board.name}". Launch prompt in ${here}PROMPTS.md.`
+  writeFileSync(file, `---
+name: ${name}
+description: ${JSON.stringify(description)}
+model: haiku
+---
+
+${marker}
+
+You are ${person} on the crew "${config.team}". Your launch prompt holds your role: follow it and the crew documents in ${here} (CREW.md, PROJECT-RULES.md, BRIEF.md). Run every crew-kit command the way those documents write it, starting with \`${values.node_kit}/\`: that sets CREW_HOME for this crew, and without it the kit cannot find crew.json.
+`)
+  ok(`${name}`)
+}
+
 const next = existsSync(`${here}creds.json`)
-  ? `The agents' launch prompts are in ${here}PROMPTS.md.`
+  ? `The agents' launch prompts are in ${here}PROMPTS.md. Start Boss's Claude Code session after this, or send an open one a new message: Claude Code reads the agent types then.`
   : 'No creds.json yet: make the crew (see README.md), then run init again.'
 console.log(failed ? '\nFix the FAIL lines above, then run init again.' : `\nInit done. ${next}`)
 process.exit(failed ? 1 : 0)

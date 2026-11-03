@@ -25,24 +25,24 @@ lint, change the database). They apply to everything you do in the repository.
 
 Your key (`pm`, `w1`, ...) is the first argument to every command below.
 
-## Your tool: `node {{kit_dir}}/crew.mjs <you> <command>`
+## Your tool: `{{node_kit}}/crew.mjs <you> <command>`
 
 ```
-node {{kit_dir}}/crew.mjs <you> tools                          # list agent tools
-node {{kit_dir}}/crew.mjs <you> update <taskId> <file.md>      # post an update from a Markdown file (or `-` for stdin)
-node {{kit_dir}}/crew.mjs <you> mcp <tool> '<json arguments>'  # call one (short JSON; for text longer than one line use update)
-node {{kit_dir}}/crew.mjs <you> shot /path out.png             # screenshot, logged in as you, in your own browser profile
-node {{kit_dir}}/crew.mjs <you> attach <taskId> out.png        # upload an image to a task, prints {"url": "..."}
-node {{kit_dir}}/crew.mjs <you> api GET /api/...               # the board app's own API with your session; prints "<status> <body>"
-node {{kit_dir}}/crew.mjs <you> apij GET /api/...              # the same, but prints the body ONLY (use this when you JSON.parse)
-node {{kit_dir}}/crew.mjs <you> run script.mjs                 # your own Playwright script; default-export async ({ page, ctx, BASE, APP }) => {}
+{{node_kit}}/crew.mjs <you> tools                          # list agent tools
+{{node_kit}}/crew.mjs <you> update <taskId> <file.md>      # post an update from a Markdown file (or `-` for stdin)
+{{node_kit}}/crew.mjs <you> mcp <tool> '<json arguments>'  # call one (short JSON; for text longer than one line use update)
+{{node_kit}}/crew.mjs <you> shot /path out.png             # screenshot, logged in as you, in your own browser profile
+{{node_kit}}/crew.mjs <you> attach <taskId> out.png        # upload an image to a task, prints {"url": "..."}
+{{node_kit}}/crew.mjs <you> api GET /api/...               # the board app's own API with your session; prints "<status> <body>"
+{{node_kit}}/crew.mjs <you> apij GET /api/...              # the same, but prints the body ONLY (use this when you JSON.parse)
+{{node_kit}}/crew.mjs <you> run script.mjs                 # your own Playwright script; default-export async ({ page, ctx, BASE, APP }) => {}
 ```
 
 **Posting an update: write the Markdown to a file, then post the file.** This is the default for anything longer than one line. It needs no escaping, so quotes, backticks, code fences and newlines go in exactly as written:
 
 ```
-node {{kit_dir}}/crew.mjs <you> update <taskId> {{crew_dir}}/work/<you>/update.md
-node {{kit_dir}}/crew.mjs <you> update <taskId> {{crew_dir}}/work/<you>/update.md --customer   # only when the customer should read it
+{{node_kit}}/crew.mjs <you> update <taskId> {{crew_dir}}/work/<you>/update.md
+{{node_kit}}/crew.mjs <you> update <taskId> {{crew_dir}}/work/<you>/update.md --customer   # only when the customer should read it
 ```
 
 An update is internal (staff only) unless you pass `--customer`. An empty body, a file over 200 KB, invalid UTF-8 or NUL bytes are refused (exit 65); a missing file, a symlink or a non-file is refused (exit 66); an unknown flag or an extra argument is a usage error (exit 64); a board that cannot be reached exits 69, so try again. The board prints `posted as internal` or `posted as customer`. A customer contact's update is customer-visible whatever the flag says: the server decides. `mcp post_task_update` with a short JSON object stays valid; for text longer than one line, use `update`.
@@ -153,7 +153,7 @@ update the same pull request, put `PR #n` in the update, and move the card to Ve
 
 **Boss.** Boss's channel brings what concerns Boss. A `task_moved` reaches Boss only for a card Boss owns or created:
 the server sends a move to the card's assignee and creator, nobody else. So Boss does not hear of every card that
-reaches Verify. Boss reviews the other Verify cards from the board (`node {{kit_dir}}/watch.mjs`), or when the PM
+reaches Verify. Boss reviews the other Verify cards from the board (`{{node_kit}}/watch.mjs`), or when the PM
 mentions Boss. A review is decided on the code: approved means Ready for live; not approved means written feedback
 on the card and back to To do. Boss also gets `mention` and `reply` on its own cards, and the GitHub events
 (`merged_staging` needs nothing from Boss, `merged_production` means Boss moves the card to Done as it publishes,
@@ -185,7 +185,7 @@ The workers **keep running**: they do not end a round and wait to be woken. Ever
 with one command, which waits and then prints only what is new:
 
 ```
-node {{kit_dir}}/listen.mjs <you> [seconds]     # you = pm, w1, w2, w3, w4, pietje or nitpicker
+{{node_kit}}/listen.mjs <you> [seconds]     # you = pm, w1, w2, w3, w4, pietje or nitpicker
 ```
 
 It prints `CHAT` lines (a message in `{{chat.workChannel}}`, where the PM steers the workers; for the PM
@@ -220,12 +220,12 @@ informed in `{{chat.channel}}`. The workers answer to the PM, the PM answers to 
 To look at a page and check what it does, use the shared browser. One Chromium serves the whole crew and each person has their own context and login, so there is nothing to start or stop:
 
 ```
-node {{kit_dir}}/crew.mjs <you> browser goto {{board.url}}/projects/<id> [--tab T] [--width 390]   # opens a page, prints "URL - title"
-node {{kit_dir}}/crew.mjs <you> browser shot {{crew_dir}}/work/<you>/out.png [--full] [--tab T]      # PNG; only under your work folder
-node {{kit_dir}}/crew.mjs <you> browser eval 'document.querySelectorAll("li").length'               # runs a JS expression on the page, prints the value
-node {{kit_dir}}/crew.mjs <you> browser console                                                      # console messages and errors since the last call
-node {{kit_dir}}/crew.mjs <you> browser tabs | close-tab T | done                                    # done closes your tabs and forgets your login
-node {{kit_dir}}/crew.mjs browser status                                                             # who is using it, their tabs, idle seconds (never cookies)
+{{node_kit}}/crew.mjs <you> browser goto {{board.url}}/projects/<id> [--tab T] [--width 390]   # opens a page, prints "URL - title"
+{{node_kit}}/crew.mjs <you> browser shot {{crew_dir}}/work/<you>/out.png [--full] [--tab T]      # PNG; only under your work folder
+{{node_kit}}/crew.mjs <you> browser eval 'document.querySelectorAll("li").length'               # runs a JS expression on the page, prints the value
+{{node_kit}}/crew.mjs <you> browser console                                                      # console messages and errors since the last call
+{{node_kit}}/crew.mjs <you> browser tabs | close-tab T | done                                    # done closes your tabs and forgets your login
+{{node_kit}}/crew.mjs browser status                                                             # who is using it, their tabs, idle seconds (never cookies)
 ```
 
 Tabs default to `main`, at most 8 a person. A width stays on its tab until you give another. The first command starts the browser and signs you in with your own login. If the browser stops, the next command starts it again, signs you in again, and says so in its note. A person idle for 30 minutes loses the session. Finish with `done`. Dialogs (confirm, alert) are dismissed unless you pass `--accept-dialogs`; the console says which.
@@ -241,7 +241,7 @@ Use `browser` to look and check. Use `run` (Playwright, below) for a script that
   (`page.waitForSelector`) instead of a fixed pause, and retry once after a navigation. Only
   file a [BUG] if it still happens when you retry a minute later.
 - **A customer contact exists for read-only checks:** key `contact`. Use
-  `node {{kit_dir}}/tm.mjs contact shot /projects/<board.id from creds.json> out.png` (and `api`, `mcp`,
+  `{{node_kit}}/tm.mjs contact shot /projects/<board.id from creds.json> out.png` (and `api`, `mcp`,
   `run` the same way) to see what a customer sees. Never put the contact's password anywhere.
 
 ## The rules of the road (these are not optional)

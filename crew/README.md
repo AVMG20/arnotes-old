@@ -18,19 +18,31 @@ response is the crew's `creds.json`; nothing else is set up by hand.
 1. Write `crew.json` in the crew's home folder (see `crew.config.example.json`): the product, the
    board URL, the people's names, the crew slug (`"crew": { "slug": "..." }`, lowercase letters, digits and dashes, the one `setup.mjs` needs) and, optionally, the chat line.
 2. Put `creds.json` (the response, mode 600) in the same folder.
-3. Run `node init.mjs`. It checks the machine (Node, a browser) and renders the agents' documents
-   (`CREW.md`, `PROMPTS.md`, ...) from the `*.tmpl` files.
+3. Run `CREW_HOME=<the crew's home folder> node init.mjs`. It checks the machine (Node, a browser),
+   renders the agents' documents (`CREW.md`, `PROMPTS.md`, ...) from the `*.tmpl` files, and writes one
+   Claude Code agent definition per member into `~/.claude/agents` (`$CLAUDE_CONFIG_DIR/agents` when
+   that is set): `<crew slug>-<person>.md`, such as `acme-pia-planner.md`, with `model: haiku`.
+   `PROMPTS.md` names each one as the `subagent_type` to launch it with, so Boss can tell the members
+   apart. It never overwrites a definition it did not write. **Run init before Boss's Claude Code
+   session starts**: Claude Code reads the definitions when a session starts (an open session picks
+   them up at its next message). If Boss gets "Agent type not found", restart it with `claude --continue`.
 4. Run the tools as one of the people: `node crew.mjs boss tools`, `node crew.mjs w1 mcp my_tasks '{}'`,
    `node crew.mjs w1 shot /projects/<boardId> out.png`. (The archive keeps no execute bit, so `./crew.mjs`
    answers "permission denied"; `node crew.mjs` always works.)
 
 The home folder is `CREW_HOME` (default: this folder). Everything the kit writes goes there
 (`creds.json`, `crew.json`, `profiles/`, `.listen/`, logs, the rendered documents), so this folder
-can be replaced by a new kit on update without losing anything.
+can be replaced by a new kit on update without losing anything. Give each crew a home of its own,
+such as `~/crew-home/acme`: one kit serves them all.
+
+The rendered documents write every kit command with the crew's `CREW_HOME` in front
+(`CREW_HOME=<crew home> node <kit folder>/crew.mjs ...`, both paths written out in full), so the agents need nothing set
+in the session they run in.
 
 Environment:
 
-- `CREW_HOME`: the home folder, if it is not this one.
+- `CREW_HOME`: the home folder, if it is not this one. A leading `~` is expanded by the kit itself, so
+  a launcher that sets the variable without a shell can pass `~/crew-home/acme` as it is.
 - `CHROMIUM`: a Chromium or Chrome binary to use (or `"chromium"` in `crew.json`). Else Playwright's own.
 - `CREW_CHROMIUM_NO_SANDBOX=1`: add `--no-sandbox` to the browser. Only for hosts where Chromium's
   own sandbox cannot start (for example inside a systemd sandbox). The host decides.

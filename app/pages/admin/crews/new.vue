@@ -28,7 +28,7 @@ const STEPS = [
   { title: 'The project', description: 'What to keep in mind', icon: 'i-lucide-scroll-text' },
   { title: 'Make it', description: 'Accounts and keys', icon: 'i-lucide-wand-sparkles' },
   { title: 'Set up the computer', description: 'Kit and files', icon: 'i-lucide-laptop' },
-  { title: 'Start', description: 'One Claude Code window', icon: 'i-lucide-play' }
+  { title: 'Start', description: 'Your Claude Code session', icon: 'i-lucide-play' }
 ]
 const step = ref(0)
 
@@ -178,6 +178,8 @@ interface HelperStep {
 
 const origin = import.meta.client ? window.location.origin : ''
 const base = computed(() => creds.value?.base ?? origin)
+// Every crew gets a home folder of its own, so a second crew on the same computer sits next to it.
+const crewDir = computed(() => `~/crew-home/${form.slug}`)
 
 const checkSteps = computed<HelperStep[]>(() => [
   {
@@ -230,14 +232,14 @@ const setupSteps = computed<HelperStep[]>(() => [
   {
     id: 'files',
     title: 'Put the three downloaded files in place',
-    why: `Moves ${credsFile.value}, ${configFile.value} and ${briefFile.value} from your Downloads folder into ~/crew-home, renamed to creds.json, crew.json and BRIEF.md, and makes creds.json readable by you only.`,
+    why: `Moves ${credsFile.value}, ${configFile.value} and ${briefFile.value} from your Downloads folder into ${crewDir.value}, this crew's own folder, renamed to creds.json, crew.json and BRIEF.md, and makes creds.json readable by you only.`,
     command: [
-      'mkdir -p ~/crew-home',
-      `mv ~/Downloads/${credsFile.value} ~/crew-home/creds.json`,
-      `mv ~/Downloads/${configFile.value} ~/crew-home/crew.json`,
-      `mv ~/Downloads/${briefFile.value} ~/crew-home/BRIEF.md`,
-      'chmod 600 ~/crew-home/creds.json',
-      'ls -l ~/crew-home'
+      `mkdir -p ${crewDir.value}`,
+      `mv ~/Downloads/${credsFile.value} ${crewDir.value}/creds.json`,
+      `mv ~/Downloads/${configFile.value} ${crewDir.value}/crew.json`,
+      `mv ~/Downloads/${briefFile.value} ${crewDir.value}/BRIEF.md`,
+      `chmod 600 ${crewDir.value}/creds.json`,
+      `ls -l ${crewDir.value}`
     ].join('\n'),
     expect: 'Three lines at the end, from ls: BRIEF.md, creds.json starting with -rw------- and crew.json. Only these lines count: when all three are there, ignore any "No such file" above them.',
     trouble: [
@@ -248,11 +250,12 @@ const setupSteps = computed<HelperStep[]>(() => [
   {
     id: 'init',
     title: 'Check the computer and write the crew\'s documents',
-    why: 'Checks Node.js and the browser the crew uses, then writes CREW.md, PROMPTS.md and the other documents into ~/crew-home. It keeps your BRIEF.md.',
-    command: 'cd ~/crew-kit && CREW_HOME=~/crew-home node init.mjs',
-    expect: 'Lines that start with "ok", and at the end "Init done." Lines that start with WARN are fine, such as "no chat client configured".',
+    why: `Checks Node.js and the browser the crew uses, then writes CREW.md, PROMPTS.md and the other documents into ${crewDir.value}, and one Claude Code agent type per crew member (such as ${form.slug}-pia-planner) into ~/.claude/agents, so Claude Code can tell them apart. It keeps your BRIEF.md.`,
+    command: `cd ~/crew-kit && CREW_HOME=${crewDir.value} node init.mjs`,
+    expect: `Lines that start with "ok", eight of them under "Agent types" with names that start with ${form.slug}-, and at the end "Init done." Lines that start with WARN are fine, such as "no chat client configured".`,
     trouble: [
       '"FAIL no browser": step 4\'s last line did not finish. Run  cd ~/crew-kit && npx playwright install chromium  and then this step again.',
+      '"FAIL ... exists and was not written by init": a file with that name in ~/.claude/agents belongs to something else. Rename that file, then run this step again.',
       'Another line that starts with FAIL: it says what is missing. Fix that one thing and run the command again, until it ends with "Init done."',
       'You cannot tell from the FAIL line what to do: copy it and send it to whoever runs Taskmanager.'
     ]
@@ -261,10 +264,10 @@ const setupSteps = computed<HelperStep[]>(() => [
     id: 'check',
     title: 'Check that a crew member reaches the board',
     why: `Asks the board for the tasks of ${creds.value?.people.w1?.name ?? 'worker 1'}, with that worker's own key.`,
-    command: 'cd ~/crew-kit && CREW_HOME=~/crew-home node crew.mjs w1 mcp my_tasks \'{}\'',
+    command: `cd ~/crew-kit && CREW_HOME=${crewDir.value} node crew.mjs w1 mcp my_tasks '{}'`,
     expect: 'One line: {"total":0,"tasks":[]}. No tasks is right: nothing is assigned yet.',
     trouble: [
-      '"ERROR true": the board refused the key, so the creds.json in ~/crew-home is not this crew\'s. Press Back on this page to "Make it", download the creds file again and redo step 5. If this page was closed in between, open New crew again, fill in the same short name, and press "Give it new keys" when it says the crew exists.',
+      `"ERROR true": the board refused the key, so the creds.json in ${crewDir.value} is not this crew's. Press Back on this page to "Make it", download the creds file again and redo step 5. If this page was closed in between, open New crew again, fill in the same short name, and press "Give it new keys" when it says the crew exists.`,
       '"ERROR fetch failed": this computer does not reach Taskmanager. Run check 3 again.',
       '"Cannot find package": the kit install did not finish. Run step 4 again.'
     ]
@@ -272,25 +275,40 @@ const setupSteps = computed<HelperStep[]>(() => [
 ])
 
 // ─── 5. Start ────────────────────────────────────────────────
-// Every kit script finds the crew through CREW_HOME, and the agents run them from inside Claude
-// Code, so the variable is set before `claude` starts. --add-dir lets them read both folders.
-const START_CLAUDE = 'export CREW_HOME=~/crew-home\nclaude --add-dir ~/crew-home ~/crew-kit'
+// PROMPTS.md writes every kit command with CREW_HOME in front, so Boss can be a session that was
+// started for other work. A new window still exports it, and --add-dir lets it read both folders.
+const startClaude = computed(() => `export CREW_HOME=${crewDir.value}\nclaude --add-dir ${crewDir.value} ~/crew-kit`)
 
 function sessionCommands(who: string): string {
-  const channel = crewChannelCommand(who).replace(/\nclaude (.*)$/, '')
-  const flags = crewChannelCommand(who).match(/\nclaude (.*)$/)?.[1] ?? ''
-  return [`mkdir -p ~/crew-sessions/${who}`, `cd ~/crew-sessions/${who}`, channel, `${START_CLAUDE} ${flags}`].join('\n')
+  const command = crewChannelCommand(who, `$HOME/crew-home/${form.slug}`)
+  const channel = command.replace(/\nclaude (.*)$/, '')
+  const flags = command.match(/\nclaude (.*)$/)?.[1] ?? ''
+  const dir = `~/crew-sessions/${form.slug}-${who}`
+  return [`mkdir -p ${dir}`, `cd ${dir}`, channel, `${startClaude.value} ${flags}`].join('\n')
 }
 
-// The plain start needs no channel: Boss launches everyone, the PM included, with the
-// listen-loop prompts. Channels are an extra, because an organisation's policy can block them.
-const startPlain = computed(() => {
+// What Boss is told, in the session the admin already works in or in a window of its own. The plain
+// start needs no channel: Boss launches everyone, the PM included, with the listen-loop prompts.
+function bossMessage(alongside: boolean): string {
   const people = creds.value?.people ?? {}
   const team = ['pm', 'w1', 'w2', 'w3', 'w4', 'pietje', 'nitpicker'].map(key => people[key]?.name ?? key).join(', ')
-  return {
-    command: ['mkdir -p ~/crew-sessions/boss', 'cd ~/crew-sessions/boss', START_CLAUDE].join('\n'),
-    message: `You are Boss of the crew "${form.name.trim()}". Its files are in ~/crew-home. Read ~/crew-home/CREW.md and ~/crew-home/PROMPTS.md in full. Then launch ${team} as background agents with model haiku, each with their own prompt from PROMPTS.md (for ${people.pm?.name ?? 'the PM'}, the prompt under "PM", not the channel-mode one). Then keep Boss's loop as the top of PROMPTS.md describes: when someone hands back, read the board and resume or relaunch them.`
-  }
+  const dir = crewDir.value
+  return [
+    alongside
+      ? `Next to your current work, you are now also Boss of the Taskmanager crew "${form.name.trim()}".`
+      : `You are Boss of the Taskmanager crew "${form.name.trim()}".`,
+    `Its files are in ${dir}. Read ${dir}/CREW.md and ${dir}/PROMPTS.md in full. Run every crew-kit command exactly as PROMPTS.md writes it, with CREW_HOME in front.`,
+    `Then launch ${team} as background agents: one Agent call each, with subagent_type set to that person's agent type from the table at the top of PROMPTS.md, model haiku, run_in_background true, and that person's prompt from PROMPTS.md (for ${people.pm?.name ?? 'the PM'}, the prompt under "PM", not the channel-mode one).`,
+    'If the Agent tool answers "Agent type not found", stop and tell me: never launch a crew member without its subagent_type.',
+    'Then keep Boss\'s loop as the top of PROMPTS.md describes: when a crew member hands back, read the board and resume or relaunch them.',
+    ...(alongside ? ['Between hand-backs, carry on with your own work.'] : [])
+  ].join(' ')
+}
+
+const startHere = computed(() => bossMessage(true))
+const startPlain = computed(() => {
+  const dir = `~/crew-sessions/${form.slug}-boss`
+  return { command: [`mkdir -p ${dir}`, `cd ${dir}`, startClaude.value].join('\n'), message: bossMessage(false) }
 })
 
 const startChannels = computed(() => {
@@ -302,13 +320,13 @@ const startChannels = computed(() => {
       id: 'boss',
       title: 'Window 1: Boss, who launches the workers',
       command: sessionCommands('boss'),
-      message: `You are Boss of the crew "${form.name.trim()}". Its files are in ~/crew-home. Read ~/crew-home/CREW.md and ~/crew-home/PROMPTS.md in full. Then launch ${workers} as background agents with model haiku, each with their own prompt from PROMPTS.md. Do not launch ${pm}: she runs in her own window. Then keep Boss's loop as PROMPTS.md describes under "Channel mode: the PM's session and Boss's wake loop".`
+      message: `You are Boss of the crew "${form.name.trim()}". Its files are in ${crewDir.value}. Read ${crewDir.value}/CREW.md and ${crewDir.value}/PROMPTS.md in full. Then launch ${workers} as background agents with model haiku, each with their own subagent_type and prompt from PROMPTS.md. Do not launch ${pm}: she runs in her own window. Then keep Boss's loop as PROMPTS.md describes under "Channel mode: the PM's session and Boss's wake loop".`
     },
     {
       id: 'pm',
       title: `Window 2: ${pm}, the project manager`,
       command: sessionCommands('pm'),
-      message: `You are ${pm}, the project manager of the crew "${form.name.trim()}". Open ~/crew-home/PROMPTS.md, find the section "Channel mode: the PM's session and Boss's wake loop", and follow the prompt in its first code block as your instructions.`
+      message: `You are ${pm}, the project manager of the crew "${form.name.trim()}". Open ${crewDir.value}/PROMPTS.md, find the section "Channel mode: the PM's session and Boss's wake loop", and follow the prompt in its first code block as your instructions.`
     }
   ]
 })
@@ -787,9 +805,51 @@ const nextHint = computed(() => {
           v-else
           class="space-y-3"
         >
+          <p class="text-sm text-muted">
+            Boss is the Claude Code session that launches the crew members and checks their work. Choose
+            <span class="text-default">one</span> of the two ways below, not both.
+          </p>
+
+          <div class="rounded-lg border border-primary/40 p-4 space-y-4 text-sm">
+            <p class="font-medium text-default">
+              Way 1: in the Claude Code session you already work in
+            </p>
+            <p class="text-muted">
+              That session becomes Boss next to its own work. It does not need to be in a particular folder.
+            </p>
+            <div class="space-y-1">
+              <div class="flex items-center gap-2">
+                <p class="text-muted flex-1">
+                  a. Wait until it has finished what it is doing. Then paste this message into it and press Enter:
+                </p>
+                <UButton
+                  icon="i-lucide-copy"
+                  label="Copy"
+                  size="xs"
+                  color="neutral"
+                  variant="soft"
+                  @click="copy(startHere)"
+                />
+              </div>
+              <pre class="text-xs bg-elevated/50 border border-default rounded-md p-3 whitespace-pre-wrap">{{ startHere }}</pre>
+            </div>
+            <p class="text-muted">
+              b. Claude Code asks before it runs a command or reads a file the first time ("Do you want to proceed?").
+              Use <kbd class="font-mono text-default">↓</kbd> to put the arrow on the option that starts with
+              <span class="text-default">"Yes, and don't ask again"</span> and press Enter. More of these come while the
+              crew settles in: keep an eye on the session for the first few minutes.
+            </p>
+            <p class="text-muted">
+              c. If it says <span class="text-default">"Agent type not found"</span>, the session is older than step 6,
+              which made the agent types. Type <span class="font-mono text-default">/exit</span>, start Claude Code
+              again in the same folder with <span class="font-mono text-default">claude --continue</span> (it keeps the
+              conversation) and paste the message from a. again.
+            </p>
+          </div>
+
           <div class="rounded-lg border border-default p-4 space-y-4 text-sm">
             <p class="font-medium text-default">
-              Start the crew: one terminal window
+              Way 2: in a new terminal window, as a session that is only Boss
             </p>
             <div class="space-y-1">
               <div class="flex items-center gap-2">
@@ -853,7 +913,7 @@ const nextHint = computed(() => {
                 to="/admin/crews"
                 target="_blank"
                 class="text-primary hover:underline"
-              >Crews page</NuxtLink> shows the current time. Leave the window open while the crew works.
+              >Crews page</NuxtLink> shows the current time. Leave Boss's session open while the crew works.
             </p>
             <p>
               <span class="font-medium text-default">Give it work:</span> the board starts empty. Open the board, add a
@@ -864,7 +924,7 @@ const nextHint = computed(() => {
             </p>
             <p>
               <span class="font-medium text-default">To stop the crew:</span> type
-              <span class="font-mono text-default">stand down the crew</span> in that window and press Enter. To cut it
+              <span class="font-mono text-default">stand down the crew</span> in Boss's session and press Enter. To cut it
               off from Taskmanager at once, press Disable next to it on the Crews page.
             </p>
           </div>
@@ -876,10 +936,10 @@ const nextHint = computed(() => {
             <div class="mt-3 space-y-3">
               <p>
                 With channels, the board pushes each new card and reply straight into the project manager's window instead
-                of her checking every minute. It takes two windows instead of the one above. Your organisation may have
-                channels switched off: then Claude Code shows <span class="text-default">"blocked by org policy"</span>
-                when it starts, and nothing arrives. In that case type <span class="font-mono">/exit</span> and use the
-                one-window start above.
+                of her checking every minute. It takes two new windows instead of Way 1 or Way 2 above. Your organisation
+                may have channels switched off: then Claude Code shows <span class="text-default">"blocked by org
+                  policy"</span> when it starts, and nothing arrives. In that case type <span class="font-mono">/exit</span>
+                and use Way 1 or Way 2 above.
               </p>
               <p>
                 Two questions come first in each window. The safety check, as above. Then
