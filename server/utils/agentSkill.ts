@@ -29,7 +29,7 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
   {
     title: 'Rules',
     match: tool => /_rules?$|_rule_runs$/.test(tool.name),
-    note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired.'
+    note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired. The valid triggers, conditions and actions, with their fields, are listed in the create_rule tool description and in every refusal.'
   },
   {
     title: 'Secrets',
