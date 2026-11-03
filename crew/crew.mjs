@@ -9,6 +9,8 @@
 //   crew init                  check the machine and render the documents (init.mjs)
 //   crew setup                 make the crew by hand through the crew API (setup.mjs)
 //   crew channel <who>         the Claude Code channel server for one person (channel.mjs)
+//   crew <who> browser goto|shot|eval|console|tabs|close-tab|done   the shared browser, one context per person (browser.mjs)
+//   crew browser status|shutdown                                    the shared browser for everyone
 //
 // The other file names (tm.mjs, listen.mjs, ...) keep working.
 import { spawnSync } from 'node:child_process'
@@ -20,8 +22,15 @@ const [first, ...rest] = process.argv.slice(2)
 const scripts = { listen: 'listen.mjs', watch: 'watch.mjs', init: 'init.mjs', setup: 'setup.mjs', channel: 'channel.mjs' }
 
 if (!first || first === '-h' || first === '--help') {
-  console.log('usage: crew <who> <command ...> | crew listen <who> [sec] | crew watch | crew init | crew setup | crew channel <who>')
+  console.log('usage: crew <who> <command ...> | crew <who> browser <command> | crew browser status|shutdown | crew listen <who> [sec] | crew watch | crew init | crew setup | crew channel <who>')
   process.exit(first ? 0 : 2)
+}
+
+// The shared browser: `crew <who> browser ...` and `crew browser status|shutdown`.
+if (first === 'browser' || rest[0] === 'browser') {
+  const browserArgs = first === 'browser' ? rest : [first, ...rest.slice(1)]
+  const run = spawnSync(process.execPath, [join(kit, 'browser.mjs'), ...browserArgs], { stdio: 'inherit' })
+  process.exit(run.status ?? 1)
 }
 
 const script = scripts[first] ?? 'tm.mjs'

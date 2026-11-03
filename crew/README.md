@@ -226,10 +226,27 @@ trace from `claude --debug`.
     crew watch                    the Boss's watch of the board (watch.mjs)
     crew init                     check the machine, render the documents (init.mjs)
     crew setup                    make the crew by hand (setup.mjs)
+    crew <who> browser goto|shot|eval|console|tabs|close-tab|done   the shared browser (browser.mjs)
+    crew browser status|shutdown  the shared browser for everyone
 
 The old file names (`tm.mjs`, `listen.mjs`, ...) still work.
 
 Post long text from a file, not inline JSON: write the Markdown to a file and run `crew w1 update <taskId> body.md`. An update is internal (staff only) unless `--customer` is given; a customer contact's update is customer-visible whatever the flag says, because the server decides. The board prints `posted as internal` or `posted as customer`. An empty body, a file over 200 KB, invalid UTF-8 or NUL bytes exit 65; a missing file, a symlink or a non-file exits 66; an unknown flag exits 64; a board that cannot be reached exits 69 (try again). The one-line form is `crew w1 mcp post_task_update`, with a JSON object holding the id and the body.
+
+## The shared browser
+
+`crew <who> browser ...` looks at a page and checks it. One headless Chromium runs for the whole crew: the first command starts it, and it exits by itself after ten minutes with nobody using it. Each person gets a browser context (their cookies and storage are kept apart from everyone else's) and signs in with their own email and password from `creds.json`, the same sign-in `tm.mjs` does. Nothing about the login is written to disk. The driver is `browser-driver.mjs`: it listens on a unix socket in a 0700 folder under the work folder, and no TCP port is open. `browser.mjs` is the command.
+
+Settings: the Chromium path is `chromium` in `crew.json`, as for `tm.mjs`, else `CHROMIUM`. `CREW_CHROMIUM_NO_SANDBOX=1` adds `--no-sandbox` (see above). `CREW_BROWSER_SHOT_DIRS` (colon-separated folders) is where `shot` may write; by default only the work folder, and the system temp folder only when it is named there. `BROWSER_IDLE_SECONDS` (default 1800) ends a person's session after that much idle time, `BROWSER_EXIT_SECONDS` (600) stops the browser when nobody uses it, and `CREW_BROWSER_MAX_PEOPLE` (16) caps the number of people. `CREW_ACCEPT_DIALOGS=1` accepts dialogs for the driver.
+
+Limits, which the design does not remove:
+
+- **One Linux user runs the whole crew.** Every person can read every socket and every profile folder. Contexts stop accidents between people. They do not stop a worker who wants to reach another person's session. Separate profiles would not change that.
+- **One browser, so one failure for all.** A browser crash, or a kill, ends every person's session at once. The next command starts a new browser, signs each person in again, and says so in its note.
+- **No TCP debug port.** Nothing listens on the network. A Playwright `run` script cannot attach to this browser, so `run` keeps its own browser, and `tm.mjs run` still starts one per call.
+- **`eval` runs in the page.** Do not put secrets in a script. `send` is an allowlist of CDP domains (no downloads, no file chooser, no CSP bypass, no Browser, Target, Fetch or Storage domains).
+- **Dialogs are dismissed** unless asked for. A page can still hold a command for up to two minutes, the request timeout.
+- **`shot` writes PNG or JPEG files only**, never through a link, never over a folder, and never over an existing file without `--overwrite`.
 
 ## Updating
 

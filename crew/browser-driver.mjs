@@ -27,15 +27,19 @@
 // owner's pid (so the lock never exists half-written). A second driver takes the lock over only
 // when that pid is dead AND the socket refuses a connection; otherwise it exits and the live
 // driver keeps its socket. A takeover renames the stale lock to a unique name, checks that what it
-// moved is the file it looked at with the same dead owner, and only then removes it. A lock that
-// turns out to be a newer one goes back by a hard link, which cannot replace it.
+// moved is the file it looked at with the same dead owner, and removes it either way. Nothing is put
+// back: a live lock the rename caught is gone for a moment, so its owner takes it again on its next
+// tick (keepLock), and a claim checks the socket after it creates a lock, so a driver that still
+// answers keeps its place.
 //
 // Limits: shot writes only .png or .jpg files, never through a link, never over a folder, only
-// under CREW_BROWSER_SHOT_DIRS (default: the crew's work folder and the system temp folder), and
+// under CREW_BROWSER_SHOT_DIRS (default: the crew's work folder; the system temp folder only when it
+// is named there), and
 // never over an existing file unless --overwrite is given. send is an allowlist of CDP domains
 // (SEND_ALLOWED): no downloads, file chooser or CSP bypass, and no Browser, Target, Fetch, IO,
 // Storage, Security, SystemInfo or Debugger. People are capped at CREW_BROWSER_MAX_PEOPLE (default
-// 16). The state folder must be a real folder owned by the current user.
+// 16). The state folder must be a real folder owned by the current user; it is opened without
+// following links, and the driver keeps that descriptor open.
 //
 // Security: the socket sits in a 0700 directory and is 0600, and nothing listens on TCP.
 // Chromium runs with --remote-debugging-pipe (fds 3 and 4), never a debug port, and it exits
@@ -45,14 +49,16 @@
 // CDP method names are validated, and Chromium gets an argument array, never a shell string.
 // Contexts keep people's cookies and storage apart, which stops accidents. They do not stop a
 // hostile worker: the crew runs as one Linux user, who can read every socket and profile.
-// The login is not here: `serve({ prepare })` runs a caller's seam once per new context.
+// The login is not here: `serve({ prepare })` runs a caller's seam once per new context. The daemon
+// loads it from browser.mjs next to this file (the crew's own login). No environment setting can
+// point it elsewhere; tests of the driver pass seam: false to request().
 
 import { spawn } from 'node:child_process'
-import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { open } from 'node:fs/promises'
 import net from 'node:net'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -337,11 +343,14 @@ export function checkSendMethod(method) {
   }
 }
 
-/** Folders a screenshot may go under: CREW_BROWSER_SHOT_DIRS, else the work folder and the temp folder. */
-function allowedShotRoots() {
+/**
+ * Folders a screenshot may go under: CREW_BROWSER_SHOT_DIRS (colon-separated), else the crew's work
+ * folder. The system temp folder is never a default: a screenshot there is only allowed when named.
+ */
+export function shotRoots() {
   const list = process.env.CREW_BROWSER_SHOT_DIRS
     ? process.env.CREW_BROWSER_SHOT_DIRS.split(':').filter(Boolean)
-    : [join(process.env.CREW_HOME ? resolve(process.env.CREW_HOME) : KIT_DIR, 'work'), tmpdir()]
+    : [join(process.env.CREW_HOME ? resolve(process.env.CREW_HOME) : KIT_DIR, 'work')]
   return list.flatMap((path) => {
     try {
       return [realpathSync(resolve(path))]
@@ -356,7 +365,7 @@ function allowedShotRoots() {
  * existing folder under an allowed root, not a link or a folder, and not an existing file unless
  * overwrite is set. The messages never print a path.
  */
-export function checkShotPath(file, { overwrite = false, roots = allowedShotRoots() } = {}) {
+export function checkShotPath(file, { overwrite = false, roots = shotRoots() } = {}) {
   const refuse = (why) => {
     throw new BrowserError(`shot: ${why}`)
   }
@@ -397,12 +406,42 @@ async function writeShot(file, data, overwrite) {
   }
 }
 
-/** The state folder must be a real folder owned by the current user: never a link, never someone else's. */
-export function checkDirectory(dir) {
+/**
+ * Opens the state folder and checks it in one step: O_NOFOLLOW refuses a link, O_DIRECTORY refuses
+ * anything else, and fstat checks the owner of the folder that was opened. Returns the descriptor,
+ * which the driver keeps for its life, so the check is not separate from the open.
+ */
+export function openDirectory(dir) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const stat = lstatSync(dir)
-  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new BrowserError('the state folder must be a real folder, not a link')
-  if (stat.uid !== process.getuid()) throw new BrowserError('the state folder belongs to another user')
+  let fd
+  try {
+    fd = openSync(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
+  } catch (e) {
+    if (e.code === 'ELOOP' || e.code === 'ENOTDIR') throw new BrowserError('the state folder must be a real folder, not a link')
+    throw e
+  }
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isDirectory()) throw new BrowserError('the state folder must be a real folder, not a link')
+    if (stat.uid !== process.getuid()) throw new BrowserError('the state folder belongs to another user')
+    fchmodSync(fd, 0o700)
+  } catch (e) {
+    closeSync(fd)
+    throw e
+  }
+  return fd
+}
+
+/** The check alone, for callers that do not keep the folder open. */
+export function checkDirectory(dir) {
+  closeSync(openDirectory(dir))
+}
+
+/** True while the path still names the folder that was opened: a folder swapped for another is refused. */
+export function sameFolder(dir, fd) {
+  const opened = fstatSync(fd)
+  const named = lstatSync(dir)
+  return !named.isSymbolicLink() && named.dev === opened.dev && named.ino === opened.ino
 }
 
 /** Unix socket paths are limited to about 108 bytes. */
@@ -546,20 +585,32 @@ async function socketAccepts(sock) {
 export async function acquireLock(dir, sock = join(dir, SOCKET_NAME)) {
   const file = join(dir, LOCK_NAME)
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (tryCreateLock(file)) return true
+    if (await claim(dir, sock)) return true
     const owner = readOwner(file)
     if (owner === null) continue // it went away while we looked
     const decision = lockDecision({ ownerAlive: pidAlive(owner), socketAccepts: await socketAccepts(sock) })
     if (decision === 'busy') return false
-    if (takeStale(file, owner)) return tryCreateLock(file)
+    if (takeStale(file, owner) && (await claim(dir, sock))) return true
   }
   return false
 }
 
 /**
- * Moves the stale lock aside under a unique name, then checks what was moved: the file we looked
- * at (same inode), with the same dead owner. Only then is it removed. If the move caught a lock
- * that someone just made, it goes back by a hard link, which cannot replace a newer lock.
+ * Creates the lock, then checks the socket. A live driver whose lock a takeover caught still answers
+ * on its socket: this driver gives the lock back and leaves that socket alone.
+ */
+async function claim(dir, sock) {
+  if (!tryCreateLock(join(dir, LOCK_NAME))) return false
+  if (!(await socketAccepts(sock))) return true
+  releaseLock(dir)
+  return false
+}
+
+/**
+ * Moves the stale lock aside under a unique name, checks what was moved (the file we looked at, the
+ * same inode, with the same dead owner) and removes it. Nothing is put back: a hard link back would
+ * leave a window in which another driver takes the lock. When the move caught a live lock, its owner
+ * takes it again (keepLock), and claim keeps a second driver off the socket meanwhile.
  */
 function takeStale(file, owner) {
   let before
@@ -574,16 +625,39 @@ function takeStale(file, owner) {
   } catch {
     return false
   }
-  const same = statSync(moved).ino === before.ino && readOwner(moved) === owner && !pidAlive(owner)
+  let same = false
+  try {
+    same = statSync(moved).ino === before.ino && readOwner(moved) === owner && !pidAlive(owner)
+  } catch {
+    same = false
+  }
   if (!same) {
+    // The move caught a lock that is not the stale one: it goes back before the moved name is removed.
+    // A hard link cannot replace a newer lock. What remains: between the rename and this link the path
+    // is empty, so the live owner takes its lock again on its next tick (keepLock), and claim keeps a
+    // driver that starts in that gap off the socket. If the link fails, a newer lock is there and the
+    // moved file is kept for its owner rather than deleted.
     try {
       linkSync(moved, file)
     } catch {
-      return false // a newer lock is back in place; the moved copy stays for its owner
+      return false
     }
   }
-  unlinkSync(moved)
+  try {
+    unlinkSync(moved)
+  } catch {
+    // already gone
+  }
   return same
+}
+
+/** A live driver whose lock a takeover moved away takes it again. A lock someone else holds is left alone. */
+export function keepLock(dir) {
+  try {
+    if (readOwner(join(dir, LOCK_NAME)) === null) tryCreateLock(join(dir, LOCK_NAME))
+  } catch {
+    // the next tick tries again
+  }
 }
 
 export function releaseLock(dir) {
@@ -1100,10 +1174,13 @@ function listen(server, path) {
  */
 export async function serve(options = {}) {
   const cfg = resolveConfig(options)
-  checkDirectory(cfg.dir)
-  chmodSync(cfg.dir, 0o700)
-  if (!socketPathFits(cfg.sock)) throw new BrowserError('the state directory is too long for a unix socket path')
+  const dirFd = openDirectory(cfg.dir)
+  if (!socketPathFits(cfg.sock)) {
+    closeSync(dirFd)
+    throw new BrowserError('the state directory is too long for a unix socket path')
+  }
   if (!(await acquireLock(cfg.dir, cfg.sock))) {
+    closeSync(dirFd)
     log(`another driver owns ${cfg.dir}; leaving its socket alone`)
     return 'busy'
   }
@@ -1126,6 +1203,7 @@ export async function serve(options = {}) {
     }
     await pool.closeBrowser()
     releaseLock(cfg.dir)
+    closeSync(dirFd)
     process.umask(umask)
     log('stopped')
   }
@@ -1136,6 +1214,10 @@ export async function serve(options = {}) {
       // none
     }
     await pool.ensureBrowser()
+    // The folder and the lock are checked again just before the socket appears.
+    if (!sameFolder(cfg.dir, dirFd)) throw new BrowserError('the state folder changed while the driver started')
+    keepLock(cfg.dir)
+    if (readOwner(join(cfg.dir, LOCK_NAME)) !== process.pid) throw new BrowserError('the lock was taken by another driver')
     server = net.createServer(conn => serveConnection(conn, pool))
     await listen(server, cfg.sock)
     chmodSync(cfg.sock, 0o600)
@@ -1147,7 +1229,10 @@ export async function serve(options = {}) {
     process.on('SIGTERM', onSignal)
     process.on('SIGINT', onSignal)
   }
-  reaper = setInterval(() => pool.reap(), cfg.reapMs)
+  reaper = setInterval(() => {
+    keepLock(cfg.dir)
+    pool.reap()
+  }, cfg.reapMs)
   log('ready')
   await pool.stopped
   await teardown()
@@ -1156,13 +1241,13 @@ export async function serve(options = {}) {
 
 // ---------- the client ----------
 
-function spawnDaemon(dir, chromium) {
+function spawnDaemon(dir, chromium, seam) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const out = openSync(join(dir, LOG_NAME), 'a', 0o600)
   const env = { ...process.env, CREW_BROWSER_DIR: dir }
   if (chromium) env.CREW_BROWSER_CHROMIUM = chromium
   try {
-    spawn(process.execPath, [SELF, '_daemon'], { cwd: dir, env, detached: true, stdio: ['ignore', out, out] }).unref()
+    spawn(process.execPath, [SELF, '_daemon', ...(seam ? [] : ['--no-seam'])], { cwd: dir, env, detached: true, stdio: ['ignore', out, out] }).unref()
   } finally {
     closeSync(out)
   }
@@ -1202,7 +1287,7 @@ function exchange(conn, message) {
  * Sends one command. Resolves { result, note }, or null when nothing is running and start is false.
  * Starts the driver when none is running and start is true. Throws when the command fails.
  */
-export async function request({ dir = defaultDir(), who = null, cmd, args = {}, start = true, chromium = '' }) {
+export async function request({ dir = defaultDir(), who = null, cmd, args = {}, start = true, chromium = '', seam = true }) {
   const sock = join(dir, SOCKET_NAME)
   let conn = await connectTo(sock, 500)
   if (!conn) {
@@ -1212,7 +1297,7 @@ export async function request({ dir = defaultDir(), who = null, cmd, args = {}, 
     while (!conn) {
       if (Date.now() > deadline) throw new BrowserError(`the shared browser did not start; see ${join(dir, LOG_NAME)}`)
       if (spawnedAt === null || Date.now() - spawnedAt > SPAWN_RETRY_MS) {
-        spawnDaemon(dir, chromium)
+        spawnDaemon(dir, chromium, seam)
         spawnedAt = Date.now()
       }
       await sleep(200)
@@ -1234,7 +1319,8 @@ async function main(argv) {
       log(`crashed: ${e?.name ?? 'rejection'}`)
       process.exit(1)
     })
-    await serve({})
+    const seam = argv.includes('--no-seam') ? {} : await import(pathToFileURL(join(KIT_DIR, 'browser.mjs')).href)
+    await serve({ prepare: seam.prepare })
     process.exit(0)
   }
   const parsed = parseCli(argv)
