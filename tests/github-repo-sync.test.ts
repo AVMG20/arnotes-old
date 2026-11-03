@@ -13,7 +13,7 @@
 // The link, and a second scratch project made for the cross-project cases, are removed at the end.
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
-import { managesRepoSync, parseBranches, parseColumnName, parseLogins, sharedBranch, sharedBranchMessage, syncStatusWords } from '../shared/utils/githubRepoSync'
+import { MAX_NOTE_INPUT, branchesLimitWords, loginsHelpWords, loginsSaveNote, managesRepoSync, splitLogins, parseBranches, parseColumnName, parseLogins, sharedBranch, sharedBranchMessage, syncStatusWords } from '../shared/utils/githubRepoSync'
 
 // ── Logins ───────────────────────────────────────────────────────────
 
@@ -119,7 +119,42 @@ test('someone who has left the team keeps no rights, even as the project owner',
   assert.equal(managesRepoSync({ personal: false, isProjectOwner: false, teamRoles: null }), false)
 })
 
-// ── Routes, against a dev server ─────────────────────────────────────
+// ── Help lines and what a save changes ───────────────────────────────
+
+test('the logins note names the saved form only when typing would be saved differently', () => {
+  assert.equal(loginsSaveNote('alice, bob-smith'), null)
+  assert.equal(loginsSaveNote('alice  bob-smith'), null)
+  assert.equal(loginsSaveNote('ALICE, alice, Bob-Smith, bob'), 'Will be saved as: alice, bob-smith, bob. Logins are saved lowercase, each one once.')
+  assert.equal(loginsSaveNote('Dave'), 'Will be saved as: dave. Logins are saved lowercase, each one once.')
+  assert.equal(loginsSaveNote('bad_name'), null)
+  assert.equal(loginsSaveNote(''), null)
+})
+
+test('the logins help line states the limits the check uses', () => {
+  const words = loginsHelpWords()
+  assert.match(words, /up to 20, each up to 39 characters/)
+  assert.match(words, /saved lowercase, duplicates are removed/)
+})
+
+test('the branch help line states the limit at the largest count the check accepts', () => {
+  const ten = Array.from({ length: 10 }, (_, i) => `b${i}`).join(',')
+  assert.equal(parseBranches(ten, 'Staging').ok, true)
+  assert.equal(parseBranches(`${ten},b10`, 'Staging').ok, false)
+  assert.match(branchesLimitWords(), /up to 10 names/)
+})
+
+test('splitLogins cuts on commas and spaces, and stops once it has the limit', () => {
+  assert.deepEqual(splitLogins('a, b  c,,'), ['a', 'b', 'c'])
+  assert.deepEqual(splitLogins('a,b,c,d', 2), ['a', 'b'])
+  assert.deepEqual(splitLogins(''), [])
+})
+
+test('the logins note refuses to look at a paste over its length cap, and says it is too long', () => {
+  assert.match(loginsSaveNote('a,'.repeat(MAX_NOTE_INPUT)) ?? '', /too long/)
+  assert.equal(loginsSaveNote('a,'.repeat(MAX_NOTE_INPUT / 2 - 1) + 'a'), 'Will be saved as: a. Logins are saved lowercase, each one once.')
+})
+
+// ── Routes, against a dev server ────────────────────────────────────
 
 const BASE = process.env.GH_SYNC_TEST_BASE ?? 'http://localhost:3000'
 const OWNER = process.env.GH_SYNC_TEST_OWNER_EMAIL

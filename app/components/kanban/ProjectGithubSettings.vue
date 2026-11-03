@@ -5,7 +5,7 @@
 // anyone else. Only the project's owner and the team's owners and admins change the
 // sync settings, so everyone else sees them read-only.
 import { format } from 'date-fns'
-import { parseBranches, parseColumnName, parseLogins, sharedBranch, syncStatusWords } from '#shared/utils/githubRepoSync'
+import { branchesLimitWords, loginsHelpWords, loginsSaveNote, parseBranches, parseColumnName, parseLogins, sharedBranch, syncStatusWords } from '#shared/utils/githubRepoSync'
 import type { RepoSyncSettings } from '#shared/utils/githubRepoSync'
 
 const props = defineProps<{ projectId: string }>()
@@ -67,6 +67,8 @@ const confirmingId = ref('')
 // The sync form per repository: what is typed, what the server last held, and the
 // server's words when a save was refused.
 const drafts = reactive<Record<string, Draft>>({})
+// The logins note of every row, worked out once per change rather than on every render.
+const loginsNotes = computed(() => Object.fromEntries(Object.entries(drafts).map(([id, draft]) => [id, loginsSaveNote(draft.logins)])))
 const stored = reactive<Record<string, Draft>>({})
 const syncError = reactive<Record<string, string>>({})
 // The last catch-up answer per repository, and the repository being queued.
@@ -639,7 +641,7 @@ async function catchUp(row: LinkedRepo) {
                   :id="fieldId(row, 'logins-help')"
                   class="mt-1 text-xs text-muted"
                 >
-                  Separate them with commas, up to 20. Logins are saved lowercase, duplicates are removed. Issues and comments from anyone else are ignored and counted.
+                  {{ loginsHelpWords() }} Issues and comments from anyone else are ignored and counted.
                 </p>
                 <p
                   v-if="problemOf(row, 'logins')"
@@ -648,6 +650,13 @@ async function catchUp(row: LinkedRepo) {
                   data-github-sync-logins-error
                 >
                   {{ problemOf(row, 'logins') }}
+                </p>
+                <p
+                  v-if="loginsNotes[row.id]"
+                  class="mt-1 text-xs text-warning"
+                  data-github-sync-logins-note
+                >
+                  {{ loginsNotes[row.id] }}
                 </p>
                 <p
                   class="mt-1 text-xs text-muted"
@@ -681,7 +690,7 @@ async function catchUp(row: LinkedRepo) {
                     :id="fieldId(row, 'staging-help')"
                     class="mt-1 text-xs text-muted"
                   >
-                    Comma separated, up to 10 names. A pull request merged into one gets the tag 'merged staging'. Empty until there is one.
+                    {{ branchesLimitWords() }} A pull request merged into one gets the tag 'merged staging'. Empty until there is one.
                   </p>
                   <p
                     v-if="problemOf(row, 'staging')"
@@ -715,7 +724,7 @@ async function catchUp(row: LinkedRepo) {
                     :id="fieldId(row, 'production-help')"
                     class="mt-1 text-xs text-muted"
                   >
-                    Comma separated, up to 10 names. Empty means the repository's default branch.
+                    {{ branchesLimitWords() }} Empty means the repository's default branch.
                   </p>
                   <p
                     v-if="problemOf(row, 'production')"
