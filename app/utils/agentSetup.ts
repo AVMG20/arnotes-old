@@ -11,14 +11,14 @@ export function crewKitCommands(origin: string): string {
   ].join('\n')
 }
 
-/** Written by the shell, so $HOME is the agent machine's own. `pm` is the member. */
-export function crewChannelCommand(): string {
+/** Written by the shell, so $HOME is the agent machine's own. `who` is the member's key. */
+export function crewChannelCommand(who = 'pm'): string {
   return `cat > .mcp.json <<EOF
 {
   "mcpServers": {
     "taskmanager-crew": {
       "command": "node",
-      "args": ["$HOME/crew-kit/channel.mjs", "pm"],
+      "args": ["$HOME/crew-kit/channel.mjs", "${who}"],
       "env": { "CREW_HOME": "$HOME/crew-home" }
     }
   }

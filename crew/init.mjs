@@ -72,7 +72,7 @@ for (const file of readdirSync(kitDir).filter(f => f.endsWith('.tmpl'))) {
 }
 
 const next = existsSync(`${here}creds.json`)
-  ? `\nInit done. Next: run the tools (README.md, step 4), then launch the agents from ${here}PROMPTS.md.`
+  ? `The agents' launch prompts are in ${here}PROMPTS.md.`
   : 'No creds.json yet: make the crew (see README.md), then run init again.'
 console.log(failed ? '\nFix the FAIL lines above, then run init again.' : `\nInit done. ${next}`)
 process.exit(failed ? 1 : 0)

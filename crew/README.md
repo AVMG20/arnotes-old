@@ -20,8 +20,9 @@ response is the crew's `creds.json`; nothing else is set up by hand.
 2. Put `creds.json` (the response, mode 600) in the same folder.
 3. Run `node init.mjs`. It checks the machine (Node, a browser) and renders the agents' documents
    (`CREW.md`, `PROMPTS.md`, ...) from the `*.tmpl` files.
-4. Run the tools as one of the people: `./crew.mjs boss tools`, `./crew.mjs w1 mcp my_tasks '{}'`,
-   `./crew.mjs w1 shot /projects/<boardId> out.png`.
+4. Run the tools as one of the people: `node crew.mjs boss tools`, `node crew.mjs w1 mcp my_tasks '{}'`,
+   `node crew.mjs w1 shot /projects/<boardId> out.png`. (The archive keeps no execute bit, so `./crew.mjs`
+   answers "permission denied"; `node crew.mjs` always works.)
 
 The home folder is `CREW_HOME` (default: this folder). Everything the kit writes goes there
 (`creds.json`, `crew.json`, `profiles/`, `.listen/`, logs, the rendered documents), so this folder

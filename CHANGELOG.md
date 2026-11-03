@@ -4,7 +4,15 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
-- **New crew** on the Crews page is a wizard. It makes the crew from the instance admin's session, so no `crews:manage` key or window is needed. Then it guides the helper step by step: download `creds.json` and `crew.json`, install the kit, put the files in place, check the machine and a worker's key, and start the PM's session. A tick box marks each step done, and every step can be copied, or the lot as one prompt for Claude Code. A slug that is taken offers new keys instead. `POST /api/admin/crews` is the route behind it, and it is written to the agent audit as the Crews page
+- **New crew** on the Crews page is a five-step wizard that anyone can follow. It makes the crew from the instance admin's session, so no `crews:manage` key or window is needed (`POST /api/admin/crews`, written to the agent audit as the Crews page).
+  - It asks for the project and what to keep in mind, and writes that as `BRIEF.md`.
+  - The helper downloads `creds-<slug>.json`, `crew-<slug>.json` and `brief-<slug>.md`.
+  - Then three checks (Node.js, Claude Code, reaching Taskmanager) and four setup commands (kit and Chromium, files, `init.mjs`, a worker's key).
+  - Each step says what to run, what a good result looks like and what to do when it does not match, and has a tick box. The whole list can also be copied as one prompt for Claude Code.
+  - The crew starts in one Claude Code window, with `CREW_HOME` set and both crew folders added. The page names the option to pick on each start-up question: the folder-trust screen and the MCP screen both start on the option you do not want. Channels are an optional extra, with the "blocked by org policy" message to look for.
+  - The page asks before you leave it while `creds.json` is not downloaded yet.
+  - A short name that is taken offers new keys instead
+- The crew kit treats `BRIEF.md` as the project the crew works on and what to keep in mind. The work comes from the board: in round 1 the PM plans what the board asks for and no longer invents tasks from the brief. `init.mjs` now ends with a single "Init done." line, and the README uses `node crew.mjs`, because the archive keeps no execute bit
 - The crew channel accepts a `*.localhost` base URL such as `http://taskmanager.localhost`
 - **Settings → Sprocket** decides who answers in the chat panel: OpenRouter as before, or Claude Code. With Claude Code the server runs `claude -p` with the model and effort you pick, working as one of your agents (an API key) through the MCP endpoint, so it sees what that agent sees and the agent audit names the agent for every change. The panel shows the tools it used while it answers. Only the instance admin can choose Claude Code unless `SPROCKET_CLAUDE_FOR_ALL=true`, because every run uses the server's own Claude Code login
 - Each Sprocket run hands `claude -p` its short-lived key in `TASKMANAGER_API_KEY`; the MCP config refers to `${TASKMANAGER_API_KEY}`, so the key is never written to disk

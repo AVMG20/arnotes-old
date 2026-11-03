@@ -475,7 +475,16 @@ The setup guide also offers a copyable skill file that teaches an agent the conv
 
 ### Crew API
 
-The simplest way to make a crew is **New crew** on the Crews page (`/admin/crews/new`). It makes the crew from the instance admin's own session, so it needs neither a `crews:manage` key nor the window below. Then it walks whoever sets up the agents' machine through the rest, step by step: download `creds.json` and `crew.json`, install the kit, put the two files in `~/crew-home`, run `init.mjs`, check a worker's key, and start the project manager's session with the crew channel. The steps can also be copied as one prompt for Claude Code. `creds.json` lives only in that page's memory, so leaving the page before downloading it means rotating the crew for new keys.
+The simplest way to make a crew is **New crew** on the Crews page (`/admin/crews/new`). It makes the crew from the instance admin's own session, so it needs neither a `crews:manage` key nor the window below. It asks what the project is and what to keep in mind, which becomes `BRIEF.md`. Then it walks whoever sets up the agents' computer through the rest, one command at a time, each with the result to expect and what to do when it does not match:
+- download three files
+- check Node.js, Claude Code and the connection
+- install the kit and Chromium
+- put the files in `~/crew-home`
+- run `init.mjs`
+- check a worker's key
+- start the crew in one Claude Code window
+
+The setup can also be copied as one prompt for Claude Code. `creds.json` lives only in that page's memory, so leaving the page before downloading it means rotating the crew for new keys. The crew's work then comes from the board: a task assigned to the project manager is what she picks up.
 
 `/api/crews` creates and manages crews for the crew kit. It answers only a request that really comes from this machine: the socket peer is loopback and the request carries no `X-Forwarded-For`, `X-Real-IP` or `Forwarded` header, whatever its value or casing. Behind a reverse proxy every request counts as remote, and while the window is closed a remote request gets a plain `404` with no hint.
 
