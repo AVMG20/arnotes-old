@@ -345,8 +345,9 @@ async function copySkill() {
               </div>
               <pre class="text-xs font-mono bg-elevated/50 border border-default rounded-md p-3 overflow-x-auto">{{ mcpCommand }}</pre>
               <p class="text-xs text-muted">
-                Run it where <code class="font-mono">$TASKMANAGER_API_KEY</code> is set. A new key under
-                Settings → API keys shows it with the export line filled in. More clients on
+                It saves the variable's name, not the key: Claude Code fills
+                <code class="font-mono">$TASKMANAGER_API_KEY</code> in from the environment each time it starts.
+                A new key under Settings → API keys shows it with the export line filled in. More clients on
                 <NuxtLink
                   to="/mcp"
                   class="text-primary underline"

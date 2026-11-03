@@ -6,8 +6,8 @@ a Taskmanager board. This folder is the kit: the scripts and the templates the a
 
 Taskmanager serves the kit itself, so it always matches the instance it talks to:
 
-    curl -fsSL -o crew.tar.gz https://<your-taskmanager>/crew/kit.tar.gz
-    tar -xzf crew.tar.gz && cd crew
+    mkdir -p ~/crew-kit && cd ~/crew-kit   # the archive has no folder of its own
+    curl -fsSL https://<your-taskmanager>/crew/kit.tar.gz | tar -xz
     npm install                       # needs Node 20 or newer
 
 ## A provisioned crew (the way to run it)

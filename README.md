@@ -445,13 +445,13 @@ The endpoint is `https://taskmanager.example.com/api/mcp`, spoken over streamabl
 
 ```bash
 export TASKMANAGER_API_KEY=arn_your_key_here
-claude mcp add --transport http taskmanager https://taskmanager.example.com/api/mcp \
-  --header "Authorization: Bearer $TASKMANAGER_API_KEY"
+claude mcp add --scope user --transport http taskmanager https://taskmanager.example.com/api/mcp \
+  --header 'Authorization: Bearer ${TASKMANAGER_API_KEY}'
 ```
 
-With the key in the environment, an agent following the setup instructions from Settings → Sprocket uses it as `$TASKMANAGER_API_KEY` and never types or prints it. Sprocket's own runs work the same way: the server passes each `claude -p` run its short-lived key in that variable.
+The single quotes keep the shell from expanding the variable, so Claude Code saves `${TASKMANAGER_API_KEY}` and fills it in from the environment every time it starts: the key itself is never written to its config. Keep the `export` in your shell profile, or run it before `claude`. An agent following the setup instructions from Settings → Sprocket uses the key only as that variable and never types or prints it. Sprocket's own runs work the same way: the server passes each `claude -p` run its short-lived key in that variable.
 
-For clients configured with JSON (Claude Code's `.mcp.json` also accepts `"Bearer ${TASKMANAGER_API_KEY}"` here, filled in from the environment):
+For clients configured with JSON (Claude Code's `.mcp.json` also accepts `"Bearer ${TASKMANAGER_API_KEY}"` here):
 
 ```json
 {

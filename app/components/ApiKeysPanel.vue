@@ -307,8 +307,9 @@ function expiryLabel(key: ApiKeySummary): string {
             </div>
             <p class="text-xs text-muted pt-1">
               Or connect Claude Code in one go: these lines put the key in
-              <code class="font-mono">$TASKMANAGER_API_KEY</code> and add the MCP server. Start
-              <code class="font-mono">claude</code> from the same terminal.
+              <code class="font-mono">$TASKMANAGER_API_KEY</code> and add the MCP server by that name only, so
+              the key is never saved. Claude Code reads it on every start: keep the export in your shell
+              profile, or run it before <code class="font-mono">claude</code>.
             </p>
             <div class="flex gap-2">
               <pre class="flex-1 min-w-0 text-xs font-mono bg-default border border-default rounded-md px-3 py-2 whitespace-pre-wrap break-all">{{ claudeCommand }}</pre>

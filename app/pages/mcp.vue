@@ -24,9 +24,7 @@ function scopeLabel(scope: string): string {
 const origin = computed(() => (import.meta.client ? window.location.origin : ''))
 const endpoint = computed(() => `${origin.value}/api/mcp`)
 
-const claudeCodeCommand = computed(() =>
-  `claude mcp add --transport http taskmanager ${endpoint.value} \\\n  --header "Authorization: Bearer arn_your_key_here"`
-)
+const claudeCodeCommand = computed(() => `${exportKeyCommand()}\n${mcpAddCommand(origin.value)}`)
 
 const jsonConfig = computed(() => JSON.stringify({
   mcpServers: {
@@ -40,7 +38,7 @@ const jsonConfig = computed(() => JSON.stringify({
 
 const curlCheck = computed(() =>
   `curl -X POST ${endpoint.value} \\\n`
-  + `  -H "Authorization: Bearer arn_your_key_here" \\\n`
+  + `  -H "Authorization: Bearer $TASKMANAGER_API_KEY" \\\n`
   + `  -H "Content-Type: application/json" \\\n`
   + `  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`
 )

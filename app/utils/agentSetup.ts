@@ -27,29 +27,30 @@ EOF
 claude --dangerously-load-development-channels server:taskmanager-crew`
 }
 
-// The key travels in the environment: the shell fills it in, so an agent running these
-// commands never reads, types or prints it.
+// The key lives only in the environment. The config keeps the literal `${TASKMANAGER_API_KEY}`
+// (single quotes stop the shell expanding it) and Claude Code fills it in on every start.
 export const KEY_VARIABLE = 'TASKMANAGER_API_KEY'
 
-/** The line a person runs once, in the terminal the agent will be started from. */
+/** Run in each terminal Claude Code is started from, or put in the shell profile. */
 export function exportKeyCommand(token = 'arn_your_key_here'): string {
   return `export ${KEY_VARIABLE}=${token}`
 }
 
 export function mcpAddCommand(origin: string): string {
-  return `claude mcp add --transport http taskmanager ${origin}/api/mcp \\\n  --header "Authorization: Bearer $${KEY_VARIABLE}"`
+  return `claude mcp add --scope user --transport http taskmanager ${origin}/api/mcp \\\n  --header 'Authorization: Bearer \${${KEY_VARIABLE}}'`
 }
 
 /** Every step at once, as instructions to paste into a Claude Code session. */
 export function agentInstructions(origin: string): string {
   return `Set yourself up to work with my Taskmanager at ${origin}.
 
-The API key is in your environment as $${KEY_VARIABLE}. Use it only as that variable,
-so the shell fills it in: never echo it, print it or write its value anywhere yourself.
-If it is not set, stop and ask me to run \`${exportKeyCommand('<my key>')}\` and start you again.
+The API key is in your environment as $${KEY_VARIABLE}. Never echo it, print it or write its
+value anywhere. The command below stores the variable's name, not its value, and Claude Code
+fills it in every time it starts. If the variable is not set, stop and ask me to run
+\`${exportKeyCommand('<my key>')}\` (or put it in my shell profile) and start you again.
 
-1. Connect its MCP server:
-   claude mcp add --transport http taskmanager ${origin}/api/mcp --header "Authorization: Bearer $${KEY_VARIABLE}"
+1. Connect its MCP server, exactly as written (the single quotes matter):
+   claude mcp add --scope user --transport http taskmanager ${origin}/api/mcp --header 'Authorization: Bearer \${${KEY_VARIABLE}}'
 2. Install the crew kit and its skill:
 ${crewKitCommands(origin).split('\n').map(line => `   ${line}`).join('\n')}
 3. Read ~/crew-kit/README.md and take me through "A provisioned crew" if I want to run a crew.
