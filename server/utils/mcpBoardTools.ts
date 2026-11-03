@@ -19,6 +19,7 @@ import { MAX_PROJECT_DESCRIPTION, PROJECT_STATUSES, parseDueOn, parseProjectStat
 import { projectPeople } from './people'
 import { readTaskGithubLinks } from './githubTaskLinks'
 import { notifyAssigned, notifyTaskChange } from './notifyEvents'
+import { tellUnblockedOnTrash } from './unblockedWatch'
 import { announceTaskCreated } from './agentEvents'
 import { recordAgentAction } from './agentAudit'
 import { pmDiscard, pmGet, pmList, pmQueueStatus, pmRetry, type FailureState } from './githubDeliveryFailures'
@@ -1133,6 +1134,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const affected = (await columnTasksOrdered(column.id)).length
       const stamp = agentDeletion(context)
 
+      // Known gap (GH #36 slice 5): the cards moved or trashed here are changed in bulk, so no unblocked news is sent for a
+      // blocker that finishes this way. Left as is; see the card.
       if (target) {
         // Where they came from is recorded, so restore_column brings them home
         // rather than handing back an empty column.
@@ -1469,6 +1472,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
     async handler(args, context) {
       const { task, board } = await findTask(requireString(args, 'id'), context, { staff: 'deleting tasks' })
       await db.update(projectTasks).set(agentDeletion(context)).where(eq(projectTasks.id, task.id))
+      // Trashing the last open blocker of a task counts as finishing it (GH #36 slice 5).
+      await tellUnblockedOnTrash(board, task.id, context.userId)
       await touchBoard(board.id)
       return {
         trashed: true,

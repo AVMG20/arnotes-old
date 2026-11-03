@@ -7,6 +7,7 @@ import { notificationExcerpt, notify } from './notifications'
 import { projectPeople } from './people'
 import { agentEventHub, emitAgentEventAsync, emitInBackground, githubDatabaseLookups, replyRecipients } from './agentEvents'
 import { agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, moveRecipients } from './moveWatch'
+import { tellUnblockedOnChange } from './unblockedWatch'
 import type { ReplyWriter } from './agentEvents'
 
 type Project = { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
@@ -156,6 +157,8 @@ export async function notifyTaskChange(project: Project, task: Task, actorId: st
   })
   // Agents hear of a card that reached a column they watch for.
   emitInBackground(() => tellAgentsOfMove(project, task, actorId, changes))
+  // The people on a task that was the last thing holding another back hear it (GH #36 slice 5). Never throws.
+  void tellUnblockedOnChange(project, task.id, actorId, changes)
 }
 
 // The people a move reaches: the card's people and the crew pm, coalesced per board, person and visibility.

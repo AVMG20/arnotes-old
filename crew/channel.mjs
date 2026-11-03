@@ -95,6 +95,7 @@ const INSTRUCTIONS = [
   '- task_assigned: a card was assigned to you. That is the signal to work on it.',
   '- reply: someone replied to your comment, or commented on a card you own or have commented on. "needs your feedback" means you have asked a QUESTION: on that card (the event does not say whether this reply answers it).',
   '- task_moved: a card you own or created moved into Verify, Ready for live, Done or Bugs.',
+  '- unblocked: the last open blocker of a card you own finished, so the card may start; read it with get_task.',
   '- mention: someone wrote your name in a comment.',
   '- pipeline_failed: a check on the pull request of a card you are assigned to failed (origin github; ref is the pull request number and its branch). Read the failure on the pull request and fix it on that same card. Do not make a new card.',
   '- pipeline_passed: the checks on that pull request passed. On a card in Verify, Boss reviews it and publishes.',

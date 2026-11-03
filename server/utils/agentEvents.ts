@@ -6,7 +6,7 @@
 //
 // The stream, one event at a time:
 //   id: <n>             monotonic per user: max(last + 1, Date.now()), so it does not restart
-//   event: <kind>       task_created | task_assigned | reply | task_moved | mention
+//   event: <kind>       task_created | task_assigned | reply | task_moved | mention | unblocked
 //                       pipeline_failed | pipeline_passed | merged_staging | merged_production
 //                       delivery_failed (the crew's pm only; task is null; ids, class, attempts and a code, never the reason or the payload)
 //   data: {"kind","task","board","from","origin","title","ref","needs_feedback_from_me","assigned_to_me","is_pm","is_boss"}
@@ -33,11 +33,13 @@ import { crewAccountLive, isCrewAddress, normalizeAddress, personKeyOf } from '.
 import { projectPeople } from './people'
 
 const CORE_EVENT_KINDS = ['task_created', 'task_assigned', 'reply', 'task_moved', 'mention'] as const
+// A task that was blocked is no longer (GH #36): sent to its assignee and the crew's pm. Only unblockedWatch.ts emits it.
+const UNBLOCK_EVENT_KINDS = ['unblocked'] as const
 // What GitHub did to a card's pull request. Only announceGithubEvent emits them.
 export const GITHUB_EVENT_KINDS = ['pipeline_failed', 'pipeline_passed', 'merged_staging', 'merged_production'] as const
 // What a delivery of GitHub that gave up tells the crew's pm. Only announceDeliveryFailed emits it.
 export const DELIVERY_EVENT_KINDS = ['delivery_failed'] as const
-export const AGENT_EVENT_KINDS = [...CORE_EVENT_KINDS, ...GITHUB_EVENT_KINDS, ...DELIVERY_EVENT_KINDS] as const
+export const AGENT_EVENT_KINDS = [...CORE_EVENT_KINDS, ...UNBLOCK_EVENT_KINDS, ...GITHUB_EVENT_KINDS, ...DELIVERY_EVENT_KINDS] as const
 export type DeliveryEventKind = (typeof DELIVERY_EVENT_KINDS)[number]
 export type GithubEventKind = (typeof GITHUB_EVENT_KINDS)[number]
 export type AgentEventKind = (typeof AGENT_EVENT_KINDS)[number]
