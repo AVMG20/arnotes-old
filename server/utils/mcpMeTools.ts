@@ -6,7 +6,10 @@ import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '../db'
 import { notifications, projectTasks, projects, user } from '../db/schema'
 import { accessibleBoards } from './mcpBoardTools'
-import { readableTasksIn } from './mcpAccess'
+import { blockedStatesOn } from './taskDependencyService'
+import { blockedMark } from './mcpBlockerLinks'
+import type { BlockedMark } from './mcpBlockerLinks'
+import { audienceOf, readableTasksIn } from './mcpAccess'
 import { McpToolError, optionalBoolean, optionalLimit, optionalStringArray } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
 
@@ -14,7 +17,7 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
   {
     name: 'my_tasks',
     title: 'Read my tasks',
-    description: 'The tasks assigned to the key\'s owner across every board they can open, soonest due date first: the same list as "My tasks" in the app, plus the subtasks assigned to them, each with its parent (parent: id and title) so it can be worked by its own id. Finished tasks are left out unless asked for.',
+    description: 'The tasks assigned to the key\'s owner across every board they can open, soonest due date first: the same list as "My tasks" in the app, plus the subtasks assigned to them, each with its parent (parent: id and title) so it can be worked by its own id. Finished tasks are left out unless asked for. A task that waits for an open blocker reads blocked: true with blockedBy (team only).',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
@@ -64,9 +67,17 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
 
       // Tasks with no date sort last, as in the app.
       const sorted = [...rows].sort((a, b) => (a.dueOn ?? '9999').localeCompare(b.dueOn ?? '9999'))
+      const shown = sorted.slice(0, limit)
+      // One read per board, each mark read as that board lets the key read it (a customer's contact gets no blocker ids).
+      const marks = new Map<string, BlockedMark>()
+      for (const boardId of new Set(shown.map(row => row.boardId))) {
+        const states = await blockedStatesOn(boardId, shown.filter(row => row.boardId === boardId).map(row => row.id))
+        const audience = audienceOf(context, boards.find(board => board.id === boardId)!)
+        for (const [id, state] of states) marks.set(id, blockedMark(state, audience))
+      }
       return {
         total: sorted.length,
-        tasks: sorted.slice(0, limit).map(row => ({
+        tasks: shown.map(row => ({
           id: row.id,
           title: row.title,
           board: { id: row.boardId, name: row.board },
@@ -74,6 +85,7 @@ export const MCP_ME_TOOLS: McpToolDefinition[] = [
           ...(row.startOn ? { startOn: row.startOn } : {}),
           ...(row.completedAt ? { completed: true } : {}),
           ...(row.labels.length ? { labels: row.labels } : {}),
+          ...marks.get(row.id),
           ...(row.parentTaskId ? { parent: { id: row.parentTaskId, title: parentTitles.get(row.parentTaskId) ?? null } } : {})
         }))
       }

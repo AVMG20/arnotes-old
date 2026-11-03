@@ -8,7 +8,8 @@ import type { McpToolDefinition } from './mcpToolKit'
 // Tools are grouped in the order a person would think of them.
 // A group may carry a note: a short paragraph on what its tools have in common.
 const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note?: string }[] = [
-  { title: 'Boards, columns and tasks', match: tool => /^(list_boards|get_board|get_task|search_tasks|list_task_labels|create_board|update_board|(create|update|delete|restore)_(column|task)|post_task_update|move_task)$/.test(tool.name) },
+  { title: 'Boards, columns and tasks', match: tool => /^(list_boards|get_board|get_task|search_tasks|list_task_labels|create_board|update_board|(create|update|delete|restore)_(column|task)|post_task_update|move_task)$/.test(tool.name),
+    note: 'A task can wait for other tasks on its board. create_task and update_task take blockedBy, and update_task also takes unblockedBy: lists of task ids or links on the same board. Only the team may change these links. A task that waits for an open blocker reads blocked: true, with blockedBy listing the open ones (a customer sees blocked but not the ids). blocked: false means the task is ready. A blocker that is done or in the trash does not block, and a link that would close a loop is refused, with the loop named.' },
   {
     title: 'Task updates',
     match: tool => /^(edit|delete)_task_update$/.test(tool.name),

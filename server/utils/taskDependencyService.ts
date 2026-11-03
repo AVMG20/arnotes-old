@@ -63,7 +63,13 @@ const NOT_STAFF = 'Adding and removing blocked-by links is for the team'
 const DUPLICATE = 'This task already waits for that one.'
 
 type TaskRow = Pick<ProjectTask, 'id' | 'projectId' | 'columnId' | 'title' | 'visibility' | 'completedAt' | 'deletedAt'>
-type Db = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
+type Db = typeof db | Tx
+
+/** Runs work in the caller's transaction when it has one, or in a transaction of its own. */
+export function inTransaction<T>(outer: Tx | undefined, work: (tx: Tx) => Promise<T>): Promise<T> {
+  return outer ? work(outer) : db.transaction(work)
+}
 
 function refuse(reason: BlockerRefusal['reason'], message: string): BlockerRefusal {
   return { ok: false, reason, message }
@@ -172,13 +178,13 @@ async function linksOnBoard(dbx: Db, boardId: string): Promise<TaskLink[]> {
     .where(eq(projectTasks.projectId, boardId))
 }
 
-export async function addBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> {
+export async function addBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor, outer?: Tx): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> {
   // Checked first, before any read that could lead to a write.
   if (actor.audience !== 'staff') return refuse('not_staff', NOT_STAFF)
   if (blockedId === blockerId) return refuse('self', 'A task cannot wait for itself.')
 
   try {
-    return await db.transaction(async (tx): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> => {
+    return await inTransaction(outer, async (tx): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> => {
       // One writer per board at a time: the reads below and the insert see each other's links.
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${boardId}))`)
 
@@ -216,12 +222,12 @@ export async function addBlocker(boardId: string, blockedId: string, blockerId: 
   }
 }
 
-export async function removeBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor): Promise<{ ok: true, blockerId: string } | BlockerRefusal> {
+export async function removeBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor, outer?: Tx): Promise<{ ok: true, blockerId: string } | BlockerRefusal> {
   if (actor.audience !== 'staff') return refuse('not_staff', NOT_STAFF)
-  const blocked = await taskById(db, blockedId, true)
+  const blocked = await taskById(outer ?? db, blockedId, true)
   if (!blocked || blocked.projectId !== boardId) return refuse('not_found', 'That task is not on this board.')
 
-  const removed = await db
+  const removed = await (outer ?? db)
     .delete(taskDependencies)
     .where(and(eq(taskDependencies.blockedTaskId, blockedId), eq(taskDependencies.blockerTaskId, blockerId)))
     .returning({ id: taskDependencies.id })
@@ -269,4 +275,31 @@ export async function blockedState(taskId: string): Promise<{ blocked: boolean, 
   }
   const openBlockerIds = openBlockers(taskId, rows, isFinished)
   return { blocked: openBlockerIds.length > 0, openBlockerIds }
+}
+
+/** The derived states of many tasks on one board: the board's links, their blocker rows and its finished columns, each read once. */
+export async function blockedStatesOn(boardId: string, taskIds: string[]): Promise<Map<string, BlockedState>> {
+  const links = await linksOnBoard(db, boardId)
+  const blockers = await tasksById(db, [...new Set(links.map(link => link.blockerId))])
+  const finishedColumns = await finishedColumnsOf(db, [boardId])
+  return blockedStatesFrom(links, blockers, finishedColumns, taskIds)
+}
+
+/** The states of the given tasks from rows already read. A blocker missing from the rows counts as finished, as in blockedState. */
+export function blockedStatesFrom(links: readonly TaskLink[], blockers: ReadonlyMap<string, TaskRow>, finishedColumns: ReadonlySet<string>, taskIds: readonly string[]): Map<string, BlockedState> {
+  const isFinished = (id: string) => {
+    const task = blockers.get(id)
+    return task ? isFinishedTask(task, finishedColumns) : true
+  }
+  const states = new Map<string, BlockedState>()
+  for (const taskId of taskIds) {
+    const openBlockerIds = openBlockers(taskId, links, isFinished)
+    states.set(taskId, { blocked: openBlockerIds.length > 0, openBlockerIds })
+  }
+  return states
+}
+
+export interface BlockedState {
+  blocked: boolean
+  openBlockerIds: string[]
 }

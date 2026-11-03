@@ -27,6 +27,10 @@ import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
 import { checkFieldValues, describeFieldValues, listFields, loadFieldValues, setFieldValues } from './customFields'
 import { attachReplyPreviews } from './taskComments'
+import { addBlocker, blockedState, blockedStatesOn, listBlockers, NOT_ON_BOARD, removeBlocker } from './taskDependencyService'
+import type { Actor, Tx } from './taskDependencyService'
+import { blockedMark, checkLinkCount, linkOrFail } from './mcpBlockerLinks'
+import type { BlockedMark } from './mcpBlockerLinks'
 import { capThread, parseSinceTime, readThreadOptions, selectUpdates, SINCE_REFUSAL, THREAD_CAP, THREAD_CAP_NOTE } from './threadOptions'
 import type { ThreadOptions } from './threadOptions'
 
@@ -143,6 +147,34 @@ export async function findTask(
 
 export function touchBoard(boardId: string) {
   return db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, boardId))
+}
+
+// ─── blocked-by links ─────────────────────────────────────────────────────────
+
+/** Whether a task waits for an open blocker, as the audience may read it (see blockedMark). */
+export async function blockedFor(taskId: string, audience: Audience): Promise<BlockedMark> {
+  return blockedMark(await blockedState(taskId), audience)
+}
+
+/** The task ids a call names under `key`, by id or pasted link, each once, each on this board. */
+async function blockerIdsOn(args: Record<string, unknown>, key: string, board: Project, context: ApiKeyContext, options: { deleted?: boolean } = {}): Promise<string[]> {
+  const listed = optionalStringArray(args, key) ?? []
+  checkLinkCount(listed, key)
+  const ids = [...new Set(listed.map(ref => idFromReference(ref, 'task')).filter(Boolean))]
+  for (const id of ids) {
+    const { task } = await findTask(id, context, { includeDeleted: options.deleted })
+    if (task.projectId !== board.id) throw new McpToolError(NOT_ON_BOARD)
+  }
+  return ids
+}
+
+/**
+ * Makes and removes blocked-by links for one task, inside the caller's transaction. A refused link
+ * throws, so the transaction that holds the task's own write rolls back with it.
+ */
+async function changeBlockers(tx: Tx, board: Project, taskId: string, actor: Actor, adds: string[], removes: string[]): Promise<void> {
+  for (const blockerId of adds) linkOrFail(await addBlocker(board.id, taskId, blockerId, actor, tx))
+  for (const blockerId of removes) linkOrFail(await removeBlocker(board.id, taskId, blockerId, actor, tx))
 }
 
 // ─── people and schedule ──────────────────────────────────────────────────────
@@ -288,6 +320,7 @@ function taskCard(task: ProjectTask, options: {
   board?: string
   people?: Map<string, string>
   fields?: Record<string, string | number>
+  blocked?: BlockedMark
 } = {}) {
   const detail = options.detail ?? 'summary'
   const terms = options.terms ?? []
@@ -299,6 +332,7 @@ function taskCard(task: ProjectTask, options: {
     ...(options.parent ? { parent: options.parent } : {}),
     title: task.title,
     labels: task.tags,
+    ...(options.blocked ?? {}),
     // Like the update count, a field nobody has filled in is left out.
     ...taskSchedule(task, options.people),
     ...(options.fields && Object.keys(options.fields).length ? { fields: options.fields } : {}),
@@ -335,6 +369,7 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
   const audience = audienceOf(context, board)
   const columns = await projectColumnsOrdered(board.id)
   const column = columns.find(c => c.id === task.columnId)
+  const blockers = await listBlockers(task.id, { userId: context.userId, audience })
 
   const sinceAt = thread.since === undefined ? undefined : await sinceMoment(task.id, thread.since, audience)
   const fetched = await db
@@ -368,6 +403,8 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
     labels: task.tags,
     ...taskSchedule(task, await peopleNames(board)),
     ...(audience === 'staff' ? await describedFields(board, task) : {}),
+    ...(await blockedFor(task.id, audience)),
+    ...(blockers.length ? { blockers } : {}),
     description: task.description ? htmlToMarkdown(task.description) : '',
     // The GitHub links the caller may see, with what GitHub says about each (see githubTaskLinks).
     github: (await readTaskGithubLinks({ taskId: task.id, audience })).links,
@@ -641,7 +678,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_board',
     title: 'Read a board',
-    description: 'Read a board the way it is drawn: its columns in order, and in each the tasks with their title, labels and the opening line of the description. Call this before creating or moving tasks so board, column and task names match exactly, then get_task for the full description and updates of the one you care about. Narrow a big board with "columns", and pass detail:"titles" for the cheapest overview.',
+    description: 'Read a board the way it is drawn: its columns in order, and in each the tasks with their title, labels and the opening line of the description. Call this before creating or moving tasks so board, column and task names match exactly, then get_task for the full description and updates of the one you care about. Narrow a big board with "columns", and pass detail:"titles" for the cheapest overview. A task that waits for an open blocker reads blocked: true with blockedBy (the open blocker ids, team only); blocked: false means it is ready.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
@@ -700,6 +737,10 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         return { column, total: all.length, shown: all.slice(0, perColumn) }
       })
       const counts = await commentCounts(grouped.flatMap(group => group.shown.map(task => task.id)))
+      const audience = audienceOf(context, board)
+      // One read of the board's links for every card shown, not one per card.
+      const states = await blockedStatesOn(board.id, grouped.flatMap(group => group.shown).map(task => task.id))
+      const marks = new Map([...states].map(([id, state]) => [id, blockedMark(state, audience)] as const))
       const people = await peopleNames(board)
       // Custom fields are the team's own; a contact's board has none to show.
       const fieldDefs = audienceOf(context, board) === 'staff' ? await listFields(board.id) : []
@@ -725,6 +766,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
           tasks: shown.map(task => taskCard(task, {
             detail,
             updates: counts.get(task.id),
+            blocked: marks.get(task.id),
             people,
             fields: describeFieldValues(fieldDefs, fieldValues[task.id])
           }))
@@ -735,7 +777,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'get_task',
     title: 'Read a task',
-    description: 'Read one task in full: its column, Markdown description, labels, the GitHub items linked to it (the ones the key\'s person may see, with their state and pull requests) and the thread of updates posted on it. This is where the complete description lives — get_board and search_tasks only carry the opening of it. The thread comes oldest first. On a long one, read a slice: "limit" (1 to 200) keeps the oldest updates, or the newest ones with order "newest"; "since" keeps updates after a full ISO 8601 time with a zone (such as 2026-11-02T10:00:00Z) or after an update id; "prefix" keeps updates whose body starts with that text, ignoring case. Filters apply before the limit. One example per option: {"id":"<task id>","limit":5} gives the five oldest updates; {"id":"<task id>","order":"newest"} gives the thread newest first; {"id":"<task id>","since":"2026-11-02T10:00:00Z"} gives the updates after that time; {"id":"<task id>","prefix":"QUESTION"} gives only the updates that start with QUESTION. The result says updatesMatched (how many matched in all) and updatesShown (how many came back): when they differ you have a slice. Counts cover only the updates you may see, and the id of an update you may not see is refused as unknown. There is no paging: to read on, pass since with the id of the last update you have, which is the cursor to prefer. since is strictly after, so with either form an update made in the same millisecond as the mark is left out. A thread over 5000 updates is cut and the result says so (threadNote): use since.',
+    description: 'Read one task in full: its column, Markdown description, labels, the GitHub items linked to it (the ones the key\'s person may see, with their state and pull requests) and the thread of updates posted on it. Blocked-by links are listed as blockers, and blocked is true while one of them is open. This is where the complete description lives — get_board and search_tasks only carry the opening of it. The thread comes oldest first. On a long one, read a slice: "limit" (1 to 200) keeps the oldest updates, or the newest ones with order "newest"; "since" keeps updates after a full ISO 8601 time with a zone (such as 2026-11-02T10:00:00Z) or after an update id; "prefix" keeps updates whose body starts with that text, ignoring case. Filters apply before the limit. One example per option: {"id":"<task id>","limit":5} gives the five oldest updates; {"id":"<task id>","order":"newest"} gives the thread newest first; {"id":"<task id>","since":"2026-11-02T10:00:00Z"} gives the updates after that time; {"id":"<task id>","prefix":"QUESTION"} gives only the updates that start with QUESTION. The result says updatesMatched (how many matched in all) and updatesShown (how many came back): when they differ you have a slice. Counts cover only the updates you may see, and the id of an update you may not see is refused as unknown. There is no paging: to read on, pass since with the id of the last update you have, which is the cursor to prefer. since is strictly after, so with either form an update made in the same millisecond as the mark is left out. A thread over 5000 updates is cut and the result says so (threadNote): use since.',
     scope: 'boards:read',
     readOnly: true,
     inputSchema: {
@@ -1173,7 +1215,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'create_task',
     title: 'Create a task',
-    description: 'Create a task in a column. The description is Markdown and labels are the board\'s task labels (priority, workstream, …). New tasks go to the bottom of the column unless told otherwise. Pass "parent" to make a subtask of a card instead; it is kept in that card\'s panel, not on the board.',
+    description: 'Create a task in a column. The description is Markdown and labels are the board\'s task labels (priority, workstream, …). New tasks go to the bottom of the column unless told otherwise. Pass "parent" to make a subtask of a card instead; it is kept in that card\'s panel, not on the board. Pass blockedBy to make the new task wait for tasks on the same board.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -1187,6 +1229,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         position: { type: 'string', description: '"top" or "bottom" of the column. Defaults to "bottom".' },
         after: { type: 'string', description: 'Place the task directly after this task id instead.' },
         parent: { type: 'string', description: 'The id, or a link, of a card to make this a subtask of. A subtask lives in its parent\'s panel: it takes the parent\'s board, column and visibility and goes to the bottom of the parent\'s subtasks.' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: 'Ids, or links, of tasks on this board that the new task waits for. It is blocked while any of them is open. Team only.' },
         ...TASK_FIELD_PROPERTIES
       },
       required: ['title']
@@ -1212,7 +1255,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       // A customer's contact files a request; dates, assignee, the done mark and
       // custom fields are the team's to set, as they are in the app.
       if (audienceOf(context, board) === 'customer') {
-        const planning = ['dueOn', 'startOn', 'assignee', 'completed', 'fields'].filter(key => args[key] !== undefined)
+        const planning = ['dueOn', 'startOn', 'assignee', 'completed', 'fields', 'blockedBy'].filter(key => args[key] !== undefined)
         if (planning.length) {
           throw new McpToolError(`You work on "${board.name}" as a customer, so you can file a task but not set its ${planning.join(', ')}: that is for the team.`)
         }
@@ -1231,22 +1274,29 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const fieldMap = readFieldMap(args)
       const fieldDefs = fieldMap ? await listFields(board.id) : []
       if (fieldMap) asToolError(() => checkFieldValues(fieldDefs, fieldMap))
+      const blockers = await blockerIdsOn(args, 'blockedBy', board, context)
       const now = Date.now()
 
-      const [task] = await db.insert(projectTasks).values({
-        id: newId(),
-        projectId: board.id,
-        columnId: column.id,
-        title,
-        description: markdown ? markdownToHtml(markdown) : '',
-        tags: labels,
-        ...fields,
-        ...(parent ? { parentTaskId: parent.task.id, visibility: parent.task.visibility } : {}),
-        createdBy: context.userId,
-        position: parent ? await nextSubtaskPosition(parent.task.id) : await taskPosition(column.id, readPlacement(args), optionalString(args, 'after')),
-        createdAt: now,
-        updatedAt: now
-      }).returning()
+      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board) }
+      // The task and its blocked-by links are one write: a refused link leaves no task behind.
+      const [task] = await db.transaction(async (tx) => {
+        const created = await tx.insert(projectTasks).values({
+          id: newId(),
+          projectId: board.id,
+          columnId: column.id,
+          title,
+          description: markdown ? markdownToHtml(markdown) : '',
+          tags: labels,
+          ...fields,
+          ...(parent ? { parentTaskId: parent.task.id, visibility: parent.task.visibility } : {}),
+          createdBy: context.userId,
+          position: parent ? await nextSubtaskPosition(parent.task.id) : await taskPosition(column.id, readPlacement(args), optionalString(args, 'after')),
+          createdAt: now,
+          updatedAt: now
+        }).returning()
+        await changeBlockers(tx, board, created[0]!.id, actor, blockers, [])
+        return created
+      })
 
       await logActivity(task!, context.userId, [{ kind: 'created' }], 'mcp')
       announceTaskCreated(board, task!, context.userId, 'agent')
@@ -1260,14 +1310,14 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       return {
         created: true,
         board: { id: board.id, name: board.name },
-        task: taskCard(task!, { column: column.name, parent: parent?.task.id, people: await peopleNames(board), fields: describeFieldValues(fieldDefs, storedValues) })
+        task: taskCard(task!, { column: column.name, parent: parent?.task.id, people: await peopleNames(board), fields: describeFieldValues(fieldDefs, storedValues), blocked: await blockedFor(task!.id, audienceOf(context, board)) })
       }
     }
   },
   {
     name: 'update_task',
     title: 'Update a task',
-    description: 'Update a task\'s title, description, labels, dates, assignee or done mark. Only the fields you pass change, and each replaces its value entirely — read the task first when editing part of a description. Use move_task to change its column.',
+    description: 'Update a task\'s title, description, labels, dates, assignee or done mark. Only the fields you pass change, and each replaces its value entirely — read the task first when editing part of a description. Use move_task to change its column. Use blockedBy and unblockedBy to add or remove the tasks this one waits for, by id or link, on the same board.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -1277,6 +1327,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         title: { type: 'string', description: 'New title.' },
         description: { type: 'string', description: 'Complete replacement Markdown description.' },
         labels: { type: 'array', items: { type: 'string' }, description: 'Complete replacement label list, without the # prefix. Pass an empty array to clear them.' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: 'Ids, or links, of tasks on this board that this task now waits for. Team only.' },
+        unblockedBy: { type: 'array', items: { type: 'string' }, description: 'Ids, or links, of tasks this task no longer waits for. Team only.' },
         ...TASK_FIELD_PROPERTIES
       },
       required: ['id']
@@ -1289,24 +1341,31 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const fields = await readTaskFields(args, board, task)
       const fieldMap = readFieldMap(args)
 
-      if (title === undefined && markdown === undefined && labels === undefined && !Object.keys(fields).length && !fieldMap) {
-        throw new McpToolError('Pass at least one of "title", "description", "labels", "dueOn", "startOn", "assignee", "completed" or "fields".')
+      const linked = args.blockedBy !== undefined || args.unblockedBy !== undefined
+      if (title === undefined && markdown === undefined && labels === undefined && !Object.keys(fields).length && !fieldMap && !linked) {
+        throw new McpToolError('Pass at least one of "title", "description", "labels", "dueOn", "startOn", "assignee", "completed", "fields", "blockedBy" or "unblockedBy".')
       }
       // Checked before anything is saved, so a bad value changes nothing.
       const fieldDefs = fieldMap ? await listFields(board.id) : []
       if (fieldMap) asToolError(() => checkFieldValues(fieldDefs, fieldMap))
-
-      const [updated] = await db
-        .update(projectTasks)
-        .set({
-          ...(title ? { title } : {}),
-          ...(markdown !== undefined ? { description: markdown ? markdownToHtml(markdown) : '' } : {}),
-          ...(labels !== undefined ? { tags: normalizeLabels(labels) } : {}),
-          ...fields,
-          updatedAt: Date.now()
-        })
-        .where(eq(projectTasks.id, task.id))
-        .returning()
+      // The links and the save are one write: a refused link leaves the task as it was.
+      const adds = await blockerIdsOn(args, 'blockedBy', board, context)
+      const removes = await blockerIdsOn(args, 'unblockedBy', board, context, { deleted: true })
+      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board) }
+      const [updated] = await db.transaction(async (tx) => {
+        await changeBlockers(tx, board, task.id, actor, adds, removes)
+        return await tx
+          .update(projectTasks)
+          .set({
+            ...(title ? { title } : {}),
+            ...(markdown !== undefined ? { description: markdown ? markdownToHtml(markdown) : '' } : {}),
+            ...(labels !== undefined ? { tags: normalizeLabels(labels) } : {}),
+            ...fields,
+            updatedAt: Date.now()
+          })
+          .where(eq(projectTasks.id, task.id))
+          .returning()
+      })
 
       const entries = await changesToTask(task, { ...fields, ...(title ? { title } : {}) })
       await logActivity(task, context.userId, entries, 'mcp')
@@ -1329,7 +1388,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       return {
         updated: true,
         board: { id: board.id, name: board.name },
-        task: taskCard(updated!, { column: column.name, people: await peopleNames(board), fields: (await describedFields(board, updated!)).fields })
+        task: taskCard(updated!, { column: column.name, people: await peopleNames(board), fields: (await describedFields(board, updated!)).fields, blocked: await blockedFor(updated!.id, audienceOf(context, board)) })
       }
     }
   },
