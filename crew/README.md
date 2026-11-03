@@ -63,7 +63,7 @@ reply, or to a card that moved, without a listen loop. The rules for what she do
 mode"). `crew listen` still works and is the fallback.
 
 The channel only pulls. It makes outbound requests and opens no port. `base` in `creds.json` must be `https://`;
-plain `http://` is accepted only for `localhost`, `127.0.0.1` or `[::1]`. It runs one member per session.
+plain `http://` is accepted only for `localhost`, a `*.localhost` name, `127.0.0.1` or `[::1]`. It runs one member per session.
 
 **Setup (once per machine):**
 

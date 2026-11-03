@@ -53,8 +53,10 @@ try {
 } catch {
   baseUrl = null
 }
-if (!baseUrl || (baseUrl.protocol !== 'https:' && !(baseUrl.protocol === 'http:' && LOCAL_HOSTS.includes(baseUrl.hostname)))) {
-  console.error(`channel ${who}: the base URL in creds.json must be https:// (http:// is allowed only for localhost, 127.0.0.1 or [::1]). Nothing was sent.`)
+// A *.localhost name always resolves to this machine (RFC 6761), e.g. http://taskmanager.localhost.
+const local = host => LOCAL_HOSTS.includes(host) || host.endsWith('.localhost')
+if (!baseUrl || (baseUrl.protocol !== 'https:' && !(baseUrl.protocol === 'http:' && local(baseUrl.hostname)))) {
+  console.error(`channel ${who}: the base URL in creds.json must be https:// (http:// is allowed only for localhost, *.localhost, 127.0.0.1 or [::1]). Nothing was sent.`)
   process.exit(78)
 }
 
