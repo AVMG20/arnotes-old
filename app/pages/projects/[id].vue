@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ProjectTask } from '~/composables/useProjects'
 import { taskCountLabel, terminalColumnIds } from '#shared/utils/board'
+import { queryForView } from '~/utils/projectViewQuery'
 
 definePageMeta({ layout: 'app' })
 
@@ -51,7 +52,7 @@ const tabViews = computed(() => visibleViews.value.filter(v => v.key !== 'settin
 const view = computed(() => visibleViews.value.find(v => v.key === route.query.view)?.key ?? 'board')
 
 function setView(key: string) {
-  navigateTo({ path: route.path, query: { ...route.query, view: key === 'board' ? undefined : key } }, { replace: true })
+  navigateTo({ path: route.path, query: queryForView(route.query, key) }, { replace: true })
 }
 
 // The tab row scrolls sideways on a phone. Its edges fade where tabs are cut off,
