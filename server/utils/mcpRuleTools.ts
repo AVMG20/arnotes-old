@@ -8,7 +8,7 @@ import type { Project, ProjectRule } from '../db/schema'
 import { findStaffBoard, touchBoard } from './mcpBoardTools'
 import { McpToolError, newId, optionalBoolean, optionalLimit, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
-import { ACTION_KINDS, CONDITION_KINDS, KNOWN_ACTIONS, KNOWN_TRIGGERS, MAX_ACTIONS, MAX_CONDITIONS, TRIGGER_KINDS, VISIBILITIES, validateRule } from './ruleSpec'
+import { ACTION_KINDS, CONDITION_KINDS, KNOWN_ACTIONS, KNOWN_CONDITIONS, KNOWN_TRIGGERS, MAX_ACTIONS, MAX_CONDITIONS, TRIGGER_KINDS, VISIBILITIES, validateRule } from './ruleSpec'
 import { RUN_PAGE_SIZE, lastRunOf, loadRuleFrame, loadRules, nextRulePosition, ruleLimitMessage, ruleValues, ruleView, runView, storedRule } from './ruleStore'
 import type { ApiKeyContext } from './api-keys'
 
