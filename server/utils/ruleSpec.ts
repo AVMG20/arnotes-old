@@ -20,6 +20,31 @@ export type ActionKind = typeof ACTION_KINDS[number]
 export const VISIBILITIES = ['internal', 'customer'] as const
 export type Visibility = typeof VISIBILITIES[number]
 
+// The kinds with the fields each one takes, written out for an agent that was refused.
+// One place: the refusal messages and the MCP tool descriptions both read these.
+const TRIGGER_FIELDS: Record<TriggerKind, string> = {
+  task_added: '', task_moved: 'columnId', task_completed: '', task_reopened: '',
+  task_assigned: 'optional assigneeId, no id means anyone', due_set: '', due_passed: '',
+  comment_added: '', pr_merged: '', pr_closed: '', pr_checks_failed: ''
+}
+const CONDITION_FIELDS: Record<ConditionKind, string> = {
+  in_column: 'columnId', assigned_to: 'assigneeId (null means nobody)', has_label: 'label',
+  has_due_date: 'value (true or false)', visibility: 'value (internal or customer)'
+}
+const ACTION_FIELDS: Record<ActionKind, string> = {
+  move_to_column: 'columnId', assign: 'assigneeId', unassign: '', set_due_in_days: 'days from 0 to 365',
+  complete: '', reopen: '', add_label: 'label', add_comment: 'text', create_subtask: 'title',
+  set_visibility: 'value (internal or customer; project owner only)'
+}
+
+function listKinds(kinds: readonly string[], fields: Record<string, string>): string {
+  return kinds.map(kind => (fields[kind] ? `${kind}: ${fields[kind]}` : kind)).join('; ')
+}
+
+export const KNOWN_TRIGGERS = listKinds(TRIGGER_KINDS, TRIGGER_FIELDS)
+export const KNOWN_CONDITIONS = listKinds(CONDITION_KINDS, CONDITION_FIELDS)
+export const KNOWN_ACTIONS = listKinds(ACTION_KINDS, ACTION_FIELDS)
+
 // Limits. The API counts a project's existing rules against MAX_RULES_PER_PROJECT;
 // validateRule only sees one rule at a time.
 export const MAX_RULES_PER_PROJECT = 50
@@ -138,7 +163,7 @@ function pickVisibility(value: unknown, problems: string[], where: string): Visi
 // Parses the trigger. A rule has exactly one, so this takes one object, not a list.
 function parseTrigger(raw: unknown, context: RuleContext, problems: string[]): Trigger | null {
   if (!isObject(raw) || !isOneOf(TRIGGER_KINDS, raw.kind)) {
-    problems.push('Pick a known trigger; each rule has exactly one')
+    problems.push(`Pick a known trigger; each rule has exactly one. Known triggers: ${KNOWN_TRIGGERS}`)
     return null
   }
   const kind = raw.kind
@@ -156,7 +181,7 @@ function parseTrigger(raw: unknown, context: RuleContext, problems: string[]): T
 
 function parseCondition(raw: unknown, context: RuleContext, problems: string[]): Condition | null {
   if (!isObject(raw) || !isOneOf(CONDITION_KINDS, raw.kind)) {
-    problems.push('Pick a known condition')
+    problems.push(`Pick a known condition. Known conditions: ${KNOWN_CONDITIONS}`)
     return null
   }
   switch (raw.kind) {
@@ -191,7 +216,7 @@ function parseCondition(raw: unknown, context: RuleContext, problems: string[]):
 
 function parseAction(raw: unknown, context: RuleContext, problems: string[]): Action | null {
   if (!isObject(raw) || !isOneOf(ACTION_KINDS, raw.kind)) {
-    problems.push('Pick a known action for every step')
+    problems.push(`Pick a known action for every step. Known actions: ${KNOWN_ACTIONS}`)
     return null
   }
   switch (raw.kind) {
@@ -299,7 +324,7 @@ export function validateRule(input: unknown, context: RuleContext): ValidateResu
   }
 
   if (problems.length > 0 || trigger === null) {
-    return { ok: false, problems: problems.length > 0 ? problems : ['Pick a known trigger; each rule has exactly one'] }
+    return { ok: false, problems: problems.length > 0 ? problems : [`Pick a known trigger; each rule has exactly one. Known triggers: ${KNOWN_TRIGGERS}`] }
   }
   return { ok: true, rule: { name, enabled, trigger, conditions, actions } }
 }

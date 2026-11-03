@@ -74,6 +74,9 @@ function fakeRows() {
         throw new Error('database write failed')
       }
     },
+    async exists(deliveryId: string) {
+      return stored.has(deliveryId)
+    },
     async find(deliveryId: string) {
       const row = stored.get(deliveryId)
       return row ? { ...view(row), payload: row.payload } : null

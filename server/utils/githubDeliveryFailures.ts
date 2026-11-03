@@ -4,10 +4,19 @@
 // too. Every change to a row is guarded by its state, so a double call does one thing. The row keeps the latest PM
 // action (handled_by, handled_at, handled_reason) and the retry count; the full trail (every action, its actor and
 // time) is the agent audit written by the GH6c tools. There is no history column, by decision.
-import { and, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
+//
+// The PM's tools (GH6c) are the pm* functions at the end. A key sees only the repositories of the projects it
+// manages as the team (linkedProjectsOf, audienceOf): a delivery of any other repository is refused with the same
+// words as one that does not exist, and a list or count never includes one. Output is metadata; the payload is read
+// only to decide a retry, and get shows a short preview of it (previewOf), never the body.
+import { and, asc, eq, inArray, isNotNull, lt, or, sql } from 'drizzle-orm'
 import { db } from '../db'
-import { githubDeliveryFailures } from '../db/schema'
-import { getDeliveryQueue } from './githubDeliveryQueue'
+import { githubDeliveryFailures, projectGithubRepos, projects } from '../db/schema'
+import type { ApiKeyContext } from './api-keys'
+import { audienceOf, boardFilter } from './mcpAccess'
+import { McpToolError } from './mcpToolKit'
+import { githubDatabaseLookups } from './agentEvents'
+import { deliveryQueueHealth, getDeliveryQueue } from './githubDeliveryQueue'
 import type { DeliveryQueue } from './githubDeliveryQueueTypes'
 
 /** The reason kept on a row: one line, cut to 300, and never payload text (the callers pass class and reason only). */
@@ -23,7 +32,14 @@ export const JANITOR_BATCH = 500
 /** A retried row whose claim is older than this can be claimed again or discarded: the republish crashed or never concluded. */
 export const RETRY_CLAIM_MS = 10 * 60 * 1000
 
+/** What the PM is told when a key cannot act on a delivery: the same words for a missing one and one it does not manage. */
+const NOT_LINKED = 'not linked to a project you can manage'
+/** What a worker key is told when it tries to retry or discard: those are the crew pm's. */
+const PM_ONLY = 'retrying and discarding are for the crew\'s pm key'
+
 const cutTo = (text: string): string => text.replace(/[\r\n\t]+/g, ' ')
+/** Text from GitHub or a request, stripped of control and line-separator characters and cut. */
+const plain = (text: string, max: number): string => Array.from(text.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ')).slice(0, max).join('')
 
 export type FailureClass = 'transient' | 'permanent'
 /**
@@ -74,6 +90,8 @@ export type RetryOutcome = { ok: true, takeover: boolean } | { ok: false, reason
 
 /** The rows of failed deliveries. The consumer and the PM both use this; tests use a fake with the same semantics. */
 export interface FailureRows {
+  /** Whether a row exists for the delivery. Reads no payload. */
+  exists(deliveryId: string): Promise<boolean>
   find(deliveryId: string): Promise<(FailureRow & { payload: string | null }) | null>
   /**
    * Writes the row for a delivery that gave up. A new delivery gets a row in state failed. An existing row is
@@ -93,6 +111,17 @@ export interface FailureRows {
   count(): Promise<number>
   /** Clears the payloads past their retention, in batches. Returns how many rows lost one. */
   stripPayloads(now: number): Promise<number>
+}
+
+/** A repository as the PM names it: its owner and its name, in any letter case. */
+export interface RepoKey { owner: string, repo: string }
+
+/** The PM's reads: rows of the repositories a key manages. An empty repos list matches nothing. */
+export interface FailureReads {
+  /** Newest first. A null state is every state. */
+  list(query: { limit: number, state: FailureState | null, repos: RepoKey[] }): Promise<FailureRow[]>
+  /** How many rows of these repositories are in each state. */
+  countByState(repos: RepoKey[]): Promise<Partial<Record<FailureState, number>>>
 }
 
 function metadataOf(row: Omit<FailureRow, 'class' | 'state'> & { class: string, state: string }): FailureRow {
@@ -116,29 +145,37 @@ function metadataOf(row: Omit<FailureRow, 'class' | 'state'> & { class: string, 
   }
 }
 
+const table = githubDeliveryFailures
+const columns = {
+  deliveryId: table.deliveryId,
+  event: table.event,
+  owner: table.owner,
+  repo: table.repo,
+  repoId: table.repoId,
+  attempts: table.attempts,
+  class: table.class,
+  reason: table.reason,
+  firstSeenAt: table.firstSeenAt,
+  failedAt: table.failedAt,
+  state: table.state,
+  retriedCount: table.retriedCount,
+  handledBy: table.handledBy,
+  handledAt: table.handledAt,
+  handledReason: table.handledReason,
+  hasPayload: sql<boolean>`${table.payload} is not null`
+}
+
 /** Drizzle implementation of FailureRows, for the app's database handle. */
 export function makeFailureRows(database: typeof db): FailureRows {
-  const table = githubDeliveryFailures
-  const columns = {
-    deliveryId: table.deliveryId,
-    event: table.event,
-    owner: table.owner,
-    repo: table.repo,
-    repoId: table.repoId,
-    attempts: table.attempts,
-    class: table.class,
-    reason: table.reason,
-    firstSeenAt: table.firstSeenAt,
-    failedAt: table.failedAt,
-    state: table.state,
-    retriedCount: table.retriedCount,
-    handledBy: table.handledBy,
-    handledAt: table.handledAt,
-    handledReason: table.handledReason,
-    hasPayload: sql<boolean>`${table.payload} is not null`
-  }
-
   return {
+    async exists(deliveryId) {
+      const [row] = await database.select({ id: table.id })
+        .from(table)
+        .where(eq(table.deliveryId, deliveryId))
+        .limit(1)
+      return row !== undefined
+    },
+
     async find(deliveryId) {
       const [row] = await database.select({ ...columns, payload: table.payload })
         .from(table)
@@ -274,10 +311,73 @@ export function makeFailureRows(database: typeof db): FailureRows {
 
 export const databaseFailureRows: FailureRows = makeFailureRows(db)
 
+/** A repository's rows matching any of the keys (case-insensitive). No keys matches nothing. */
+function reposFilter(repos: RepoKey[]) {
+  if (!repos.length) return sql`false`
+  return or(...repos.map(key => and(
+    sql`lower(${table.owner}) = ${key.owner.toLowerCase()}`,
+    sql`lower(${table.repo}) = ${key.repo.toLowerCase()}`
+  )))
+}
+
+/** Drizzle implementation of FailureReads. */
+export function makeFailureReads(database: typeof db): FailureReads {
+  return {
+    async list({ limit, state, repos }) {
+      const rows = await database.select(columns)
+        .from(table)
+        .where(and(state ? eq(table.state, state) : undefined, reposFilter(repos)))
+        .orderBy(sql`${table.failedAt} desc`)
+        .limit(limit)
+      return rows.map(metadataOf)
+    },
+
+    async countByState(repos) {
+      const rows = await database.select({ state: table.state, count: sql<number>`count(*)::int` })
+        .from(table)
+        .where(reposFilter(repos))
+        .groupBy(table.state)
+      return Object.fromEntries(rows.map(row => [row.state, row.count])) as Partial<Record<FailureState, number>>
+    }
+  }
+}
+
+export const databaseFailureReads: FailureReads = makeFailureReads(db)
+
+/** The short code of a reason: the only word about a failure that a notice to the PM carries. Never the reason text. */
+const FAILURE_CODES: [RegExp, string][] = [
+  [/over size cap/, 'size'],
+  [/not JSON/, 'not-json'],
+  [/handed out/, 'broker-limit'],
+  [/attempts are used up/, 'attempts-used'],
+  [/earlier attempt/, 'busy'],
+  [/budget|took longer|timeout|timed out/, 'timeout'],
+  [/could not (wait|publish)/, 'queue'],
+  [/could not|records/, 'storage'],
+  [/handler/, 'handler']
+]
+
+export function failureCode(reason: string): string {
+  return FAILURE_CODES.find(([pattern]) => pattern.test(reason))?.[1] ?? 'other'
+}
+
+export interface LinkedProject {
+  owner: string
+  repo: string
+  project: { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
+}
+
 export interface PmDeps {
   rows?: FailureRows
+  reads?: FailureReads
   queue?: () => DeliveryQueue
   now?: () => number
+  /** The linked repositories among the boards the key can open: all of them, or only one repository's. */
+  linked?: (context: ApiKeyContext, only: RepoKey | null) => Promise<LinkedProject[]>
+  /** The queue's state and depths (deliveryQueueHealth). */
+  health?: () => ReturnType<typeof deliveryQueueHealth>
+  /** The people of a team's crew with their keys (githubDatabaseLookups.crewPeople). */
+  crewPeople?: (teamId: string) => Promise<{ userId: string, key: string }[]>
 }
 
 /** The failed deliveries, newest first, without payloads. */
@@ -327,4 +427,198 @@ export async function discardFailedDelivery(deliveryId: string, actor: string, r
 /** The janitor: clears stored payloads past their retention. Metadata stays. */
 export async function purgeDeliveryPayloads(deps: PmDeps = {}): Promise<number> {
   return (deps.rows ?? databaseFailureRows).stripPayloads((deps.now ?? Date.now)())
+}
+
+// ---- The PM's tools (GH6c) ----
+
+/** The linked repositories among the boards a key can open, with their projects. A null repository means all of them. */
+export async function linkedProjectsOf(context: ApiKeyContext, only: RepoKey | null): Promise<LinkedProject[]> {
+  const match = only
+    ? and(
+        sql`lower(${projectGithubRepos.owner}) = ${only.owner.toLowerCase()}`,
+        sql`lower(${projectGithubRepos.repo}) = ${only.repo.toLowerCase()}`
+      )
+    : undefined
+  const rows = await db.select({
+    owner: projectGithubRepos.owner,
+    repo: projectGithubRepos.repo,
+    id: projects.id,
+    name: projects.name,
+    userId: projects.userId,
+    teamId: projects.teamId,
+    customerId: projects.customerId
+  })
+    .from(projectGithubRepos)
+    .innerJoin(projects, eq(projects.id, projectGithubRepos.projectId))
+    .where(and(await boardFilter(context), match))
+    .orderBy(asc(projectGithubRepos.createdAt))
+  return rows.map(row => ({
+    owner: row.owner,
+    repo: row.repo,
+    project: { id: row.id, name: row.name, userId: row.userId, teamId: row.teamId, customerId: row.customerId }
+  }))
+}
+
+/** The repositories a key manages: linked to a project it works on as its team (a customer's board never counts). */
+export async function managedRepos(context: ApiKeyContext, deps: PmDeps = {}): Promise<RepoKey[]> {
+  const rows = await (deps.linked ?? linkedProjectsOf)(context, null)
+  const seen = new Map<string, RepoKey>()
+  for (const row of rows) {
+    if (audienceOf(context, row.project) === 'staff') seen.set(`${row.owner}/${row.repo}`.toLowerCase(), { owner: row.owner, repo: row.repo })
+  }
+  return [...seen.values()]
+}
+
+/** The project a key acts through for one delivery's repository. Anything else is refused with the same words. */
+async function managedProject(context: ApiKeyContext, row: FailureRow | null, deps: PmDeps): Promise<LinkedProject['project']> {
+  if (!row || !row.owner || !row.repo) throw new McpToolError(NOT_LINKED)
+  const linked = await (deps.linked ?? linkedProjectsOf)(context, { owner: row.owner, repo: row.repo })
+  const staff = linked.find(entry => audienceOf(context, entry.project) === 'staff')
+  if (!staff) throw new McpToolError(NOT_LINKED)
+  return staff.project
+}
+
+/**
+ * Retry and discard are the crew's pm key's: the key of the pm of the team's crew. A personal board has no crew, so no one
+ * else may change a row there. The list, the reads and the status stay open to every staff key.
+ */
+async function requireCrewPm(context: ApiKeyContext, project: LinkedProject['project'], deps: PmDeps): Promise<void> {
+  const people = project.teamId ? await (deps.crewPeople ?? githubDatabaseLookups.crewPeople)(project.teamId) : []
+  if (!people.some(person => person.userId === context.userId && person.key === 'pm')) throw new McpToolError(PM_ONLY)
+}
+
+/** A row as a tool shows it: metadata only. */
+export function itemOf(row: FailureRow) {
+  return {
+    id: row.deliveryId,
+    event: row.event,
+    repo: row.owner && row.repo ? `${row.owner}/${row.repo}` : null,
+    class: row.class,
+    attempts: row.attempts,
+    state: row.state,
+    reason: row.reason,
+    failedAt: row.failedAt,
+    retriedCount: row.retriedCount,
+    handledBy: row.handledBy,
+    handledAt: row.handledAt,
+    handledReason: row.handledReason,
+    hasPayload: row.hasPayload
+  }
+}
+
+export interface PayloadPreview { event: string, action: string | null, repository: string | null, number: number | null, title: string | null }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a GitHub payload is read loosely, field by field
+type Loose = Record<string, any>
+
+/** A short preview of a stored payload: the action, the repository, the number and the title (cut, no body). Null when expired. */
+export function previewOf(event: string, payload: string | null): PayloadPreview | null {
+  if (payload === null) return null
+  let body: Loose
+  try {
+    body = JSON.parse(payload) as Loose
+  } catch {
+    return { event, action: null, repository: null, number: null, title: null }
+  }
+  const text = (value: unknown, max: number): string | null => typeof value === 'string' ? plain(value, max) : null
+  const item = body.pull_request ?? body.issue ?? null
+  const target = item ?? body.check_run ?? body.workflow_run ?? null
+  return {
+    event,
+    action: text(body.action, 40),
+    repository: text(body.repository?.full_name, 120),
+    number: typeof item?.number === 'number' ? item.number : null,
+    title: text(target?.title ?? target?.name, 120)
+  }
+}
+
+/** The result of retry or discard, as the tool returns it (and the audit reads it). */
+export interface PmActionResult {
+  deliveryId: string
+  outcome: string
+  message: string
+  board: { id: string, name: string }
+}
+
+const RETRY_MESSAGES: Partial<Record<ClaimFailure, string>> = {
+  'already retried': 'already retried',
+  'payload expired': 'payload expired',
+  'not failed': 'not failed'
+}
+
+/** The list: the failed count, and the rows (newest first) of the repositories the key manages. */
+export async function pmList(context: ApiKeyContext, args: { limit: number, state: FailureState | 'all' }, deps: PmDeps = {}) {
+  const repos = await managedRepos(context, deps)
+  const reads = deps.reads ?? databaseFailureReads
+  const limit = Math.min(Math.max(1, Math.trunc(args.limit)), 200)
+  const [items, counts] = await Promise.all([
+    reads.list({ limit, state: args.state === 'all' ? null : args.state, repos }),
+    reads.countByState(repos)
+  ])
+  return { failed: counts.failed ?? 0, items: items.map(itemOf) }
+}
+
+/** One delivery: its metadata and a short preview of the payload. Never the payload itself. */
+export async function pmGet(context: ApiKeyContext, deliveryId: string, deps: PmDeps = {}) {
+  const row = await (deps.rows ?? databaseFailureRows).find(deliveryId)
+  const project = await managedProject(context, row ? metadataOf({ ...row }) : null, deps)
+  return {
+    board: { id: project.id, name: project.name },
+    item: itemOf(metadataOf({ ...row! })),
+    preview: previewOf(row!.event, row!.payload)
+  }
+}
+
+/** Sends a failed delivery back to main once. A second call, or one inside the claim window, changes nothing. */
+export async function pmRetry(context: ApiKeyContext, deliveryId: string, deps: PmDeps = {}): Promise<PmActionResult> {
+  const row = await (deps.rows ?? databaseFailureRows).find(deliveryId)
+  const project = await managedProject(context, row ? metadataOf({ ...row }) : null, deps)
+  await requireCrewPm(context, project, deps)
+  const board = { id: project.id, name: project.name }
+  let outcome: RetryOutcome
+  try {
+    outcome = await retryFailedDelivery(deliveryId, context.keyName, deps)
+  } catch {
+    return { deliveryId, outcome: 'not sent', message: 'could not republish: the broker did not confirm, the row is failed again', board }
+  }
+  if (outcome.ok) {
+    return { deliveryId, outcome: 'retried', message: outcome.takeover ? 'claim expired — retried again' : 'retried', board }
+  }
+  return { deliveryId, outcome: 'not retried', message: RETRY_MESSAGES[outcome.reason] ?? NOT_LINKED, board }
+}
+
+/** Drops a failed delivery with the PM's reason. The payload stays in the row for the audit. */
+export async function pmDiscard(context: ApiKeyContext, deliveryId: string, reason: string, deps: PmDeps = {}): Promise<PmActionResult> {
+  const row = await (deps.rows ?? databaseFailureRows).find(deliveryId)
+  const project = await managedProject(context, row ? metadataOf({ ...row }) : null, deps)
+  await requireCrewPm(context, project, deps)
+  const board = { id: project.id, name: project.name }
+  const done = await discardFailedDelivery(deliveryId, context.keyName, reason, deps)
+  return done
+    ? { deliveryId, outcome: 'discarded', message: 'discarded', board }
+    : { deliveryId, outcome: 'not discarded', message: 'not failed', board }
+}
+
+/** The state of the queue as a fixed code and sentence: never the broker's own detail, which can name a host and a port. */
+const QUEUE_STATES: Record<string, string> = {
+  unavailable: 'The queue cannot be reached, or the server has no broker address.',
+  idle: 'The queue has not been opened yet.',
+  connecting: 'The queue is connecting.',
+  connected: 'The queue is connected.',
+  reconnecting: 'The queue lost its connection and is reconnecting.',
+  closed: 'The queue is closed.',
+  unknown: 'The queue state is not known.'
+}
+
+/** The queue for the PM: its fixed state, its depths and the failed rows of its repositories by state. Never the broker address, the detail or a host or port. */
+export async function pmQueueStatus(context: ApiKeyContext, deps: PmDeps = {}) {
+  const repos = await managedRepos(context, deps)
+  if (!repos.length) throw new McpToolError(NOT_LINKED)
+  const health = await (deps.health ?? deliveryQueueHealth)()
+  const rows = await (deps.reads ?? databaseFailureReads).countByState(repos)
+  const state = health.state in QUEUE_STATES ? health.state : 'unknown'
+  return {
+    queue: { state, sentence: QUEUE_STATES[state], depth: health.depth, failedDepth: health.failed },
+    failedRows: rows
+  }
 }

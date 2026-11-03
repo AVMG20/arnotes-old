@@ -1,0 +1,39 @@
+[
+  {
+    "number": 1,
+    "title": "First issue, by an accepted login",
+    "body": "Please look at the export.",
+    "html_url": "https://github.com/example-owner/example-repo/issues/1",
+    "state": "open",
+    "comments": 2,
+    "user": { "login": "alice" }
+  },
+  {
+    "number": 2,
+    "title": "Issue by a stranger",
+    "body": "Hello from outside.",
+    "html_url": "https://github.com/example-owner/example-repo/issues/2",
+    "state": "open",
+    "comments": 0,
+    "user": { "login": "stranger" }
+  },
+  {
+    "number": 3,
+    "title": "A pull request, listed as an issue",
+    "body": "",
+    "html_url": "https://github.com/example-owner/example-repo/pull/3",
+    "state": "open",
+    "comments": 0,
+    "pull_request": { "url": "https://api.github.com/repos/example-owner/example-repo/pulls/3" },
+    "user": { "login": "bob" }
+  },
+  {
+    "number": 4,
+    "title": "Second issue, by another accepted login",
+    "body": "",
+    "html_url": "https://github.com/example-owner/example-repo/issues/4",
+    "state": "open",
+    "comments": 0,
+    "user": { "login": "bob" }
+  }
+]
