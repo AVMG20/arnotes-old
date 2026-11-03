@@ -111,7 +111,7 @@ and `origin` (empty except on `task_created`). The text is one line, for example
 - `reply` with `needs_feedback_from_me`: the text ends with ` [needs your feedback]`. It means you have asked a
   `QUESTION:` on that card at some point. It does not say whether this reply answers that question.
 - Several events on one card that arrive within two seconds of the first one are one line: `2 events for task "<card id>": ...`.
-- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`, `unblocked`, and the four GitHub kinds below.
+- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`, `unblocked`, `delivery_failed` (PM only, see below), and the four GitHub kinds below.
   - `task_created` reaches only members who are streaming now or were active in the last 24 hours. The channel passes
     it on to a worker only when the card is assigned to that worker.
   - `task_moved` reaches only the card's assignee and creator, and only when the card moves into Verify, Ready for
@@ -137,7 +137,7 @@ and `origin` (empty except on `task_created`). The text is one line, for example
   - The card's assignee and creator hear all four, as the PM does. A team that is not a crew gets its owners and
     assignees only. A customer never hears any of them.
   - A failed and then a passed pair on one card within two seconds comes as one line, both kinds in `event`, in order.
-- - `delivery_failed` (the PM only): a GitHub delivery gave up for good and waits in the failed table. `ref` is the delivery id; the title has the event, the repository, the class (transient or permanent), the attempts and a short code, never the payload or the reason text. This is live only while the PM's channel is connected: the failed list (`list_failed_deliveries`) is the record, read it at the start of a round. The PM reads it, retries it once if the cause is gone (a retry after a claim expiry sends the same stored payload again), and otherwise discards it with a reason. `github_queue_status` shows the queue.
+- `delivery_failed` (the PM only): a GitHub delivery gave up for good and waits in the failed table. `ref` is the delivery id; the title has the event, the repository, the class (transient or permanent), the attempts and a short code, never the payload or the reason text. This is live only while the PM's channel is connected: the failed list (`list_failed_deliveries`) is the record, read it at the start of a round. The PM reads it, retries it once if the cause is gone (a retry after a claim expiry sends the same stored payload again), and otherwise discards it with a reason. `github_queue_status` shows the queue.
 - The card body is never in the event. Read it with `get_task`.
 
 **If events do not arrive:**
