@@ -30,11 +30,13 @@ export async function logActivity(
   task: Pick<ProjectTask, 'id' | 'projectId'>,
   actorId: string | null,
   entries: ActivityEntry[],
-  via: ActivitySource = 'ui'
+  via: ActivitySource = 'ui',
+  // A transaction of the caller's, so a link change and its line commit or roll back together.
+  writer: Pick<typeof db, 'insert'> = db
 ) {
   if (!entries.length) return
   const now = Date.now()
-  await db.insert(taskActivity).values(entries.map((entry, index) => ({
+  await writer.insert(taskActivity).values(entries.map((entry, index) => ({
     id: newId(),
     taskId: task.id,
     projectId: task.projectId,
@@ -61,6 +63,8 @@ export function briefOf(entry: ActivityEntry): string {
     case 'start': return detail.to ? `Starts ${detail.to}` : 'Start date cleared'
     case 'renamed': return `Renamed to "${detail.to}"`
     case 'visibility': return `Made ${detail.to}`
+    case 'blocker_added': return `Waits for ${detail.to}`
+    case 'blocker_removed': return `No longer waits for ${detail.from}`
     case 'label': return detail.to ? `Added label ${detail.to}` : `Removed label ${detail.from}`
   }
 }

@@ -19,11 +19,14 @@
 //
 // addBlocker reads and writes inside one transaction under a per-board advisory lock, so two
 // opposite adds on the same board cannot both pass the cycle check.
+// Lock order: the board's advisory lock is taken first, then the task row writes (a caller's own save runs
+// after its links in the same transaction), so no two writers wait on each other in opposite order.
 import { randomUUID } from 'node:crypto'
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { projectColumns, projectTasks, taskDependencies } from '../db/schema'
-import type { ProjectTask } from '../db/schema'
+import type { ActivitySource, ProjectTask } from '../db/schema'
+import { logActivity } from './taskActivity'
 import type { Audience } from './auth-helpers'
 import { checkNewLink, describeCycle, openBlockers } from './taskDependencies'
 import type { TaskLink } from './taskDependencies'
@@ -32,6 +35,8 @@ import { terminalColumnIds } from '../../shared/utils/board'
 export interface Actor {
   userId: string
   audience: Audience
+  /** How the change was made, for the activity line. The app is the default. */
+  via?: ActivitySource
 }
 
 /** Why a write was refused. `message` is plain words, safe to show the person. */
@@ -178,6 +183,20 @@ async function linksOnBoard(dbx: Db, boardId: string): Promise<TaskLink[]> {
     .where(eq(projectTasks.projectId, boardId))
 }
 
+/** A link title on the activity line, cut so one long title cannot fill it. */
+export function cutTitle(title: string): string {
+  return title.length > 80 ? `${title.slice(0, 79).trimEnd()}…` : title
+}
+
+/**
+ * The line a link change writes on the blocked task, in the same transaction as the link. The log is
+ * read by customers too, so a blocker that is not customer-visible is named as a hidden task.
+ */
+async function logLink(tx: Tx, task: Pick<TaskRow, 'id' | 'projectId'>, actor: Actor, kind: 'blocker_added' | 'blocker_removed', blocker: Pick<TaskRow, 'title' | 'visibility'> | null): Promise<void> {
+  const name = blocker && blocker.visibility === 'customer' ? cutTitle(blocker.title) : HIDDEN_TASK_TITLE
+  await logActivity(task, actor.userId, [{ kind, detail: kind === 'blocker_added' ? { to: name } : { from: name } }], actor.via ?? 'ui', tx)
+}
+
 export async function addBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor, outer?: Tx): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> {
   // Checked first, before any read that could lead to a write.
   if (actor.audience !== 'staff') return refuse('not_staff', NOT_STAFF)
@@ -191,7 +210,8 @@ export async function addBlocker(boardId: string, blockedId: string, blockerId: 
       const blocked = await taskById(tx, blockedId)
       if (!blocked || blocked.projectId !== boardId) return refuse('not_found', 'That task is not on this board.')
 
-      const blockerOff = blockerOffBoard(boardId, await taskById(tx, blockerId))
+      const blocker = await taskById(tx, blockerId)
+      const blockerOff = blockerOffBoard(boardId, blocker)
       if (blockerOff) return blockerOff
 
       const refusal = checkNewLink(await linksOnBoard(tx, boardId), blockedId, blockerId)
@@ -202,16 +222,22 @@ export async function addBlocker(boardId: string, blockedId: string, blockerId: 
         return refuse('cycle', loopMessage(refusal.cycle, titleOf))
       }
 
-      const [row] = await tx.insert(taskDependencies).values({
-        id: randomUUID(),
-        blockedTaskId: blockedId,
-        blockerTaskId: blockerId,
-        createdBy: actor.userId,
-        createdAt: Date.now()
-      }).returning()
+      // The insert gets its own savepoint: a duplicate that gets past the lock is refused by the catch
+      // below, and an outer caller's transaction stays usable after it (without this it fails with 25P02).
+      const row = await tx.transaction(async (savepoint) => {
+        const [inserted] = await savepoint.insert(taskDependencies).values({
+          id: randomUUID(),
+          blockedTaskId: blockedId,
+          blockerTaskId: blockerId,
+          createdBy: actor.userId,
+          createdAt: Date.now()
+        }).returning()
+        return inserted!
+      })
+      await logLink(tx, blocked, actor, 'blocker_added', blocker)
       return {
         ok: true,
-        link: { id: row!.id, blockedTaskId: row!.blockedTaskId, blockerTaskId: row!.blockerTaskId, createdAt: row!.createdAt }
+        link: { id: row.id, blockedTaskId: row.blockedTaskId, blockerTaskId: row.blockerTaskId, createdAt: row.createdAt }
       }
     })
   } catch (error) {
@@ -224,15 +250,21 @@ export async function addBlocker(boardId: string, blockedId: string, blockerId: 
 
 export async function removeBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor, outer?: Tx): Promise<{ ok: true, blockerId: string } | BlockerRefusal> {
   if (actor.audience !== 'staff') return refuse('not_staff', NOT_STAFF)
-  const blocked = await taskById(outer ?? db, blockedId, true)
-  if (!blocked || blocked.projectId !== boardId) return refuse('not_found', 'That task is not on this board.')
+  return inTransaction(outer, async (tx): Promise<{ ok: true, blockerId: string } | BlockerRefusal> => {
+    const blocked = await taskById(tx, blockedId, true)
+    if (!blocked || blocked.projectId !== boardId) return refuse('not_found', 'That task is not on this board.')
 
-  const removed = await (outer ?? db)
-    .delete(taskDependencies)
-    .where(and(eq(taskDependencies.blockedTaskId, blockedId), eq(taskDependencies.blockerTaskId, blockerId)))
-    .returning({ id: taskDependencies.id })
-  if (!removed.length) return refuse('not_found', 'That task is not blocked by this one.')
-  return { ok: true, blockerId }
+    const removed = await tx
+      .delete(taskDependencies)
+      .where(and(eq(taskDependencies.blockedTaskId, blockedId), eq(taskDependencies.blockerTaskId, blockerId)))
+      .returning({ id: taskDependencies.id })
+    if (!removed.length) return refuse('not_found', 'That task is not blocked by this one.')
+
+    // The line names the blocker as it is now; a trashed one is still on the board, so it is still found.
+    const blocker = (await tasksById(tx, [blockerId])).get(blockerId) ?? null
+    await logLink(tx, blocked, actor, 'blocker_removed', blocker)
+    return { ok: true, blockerId }
+  })
 }
 
 /** The blockers of a task as the viewer may read them, oldest link first. */
