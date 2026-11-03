@@ -7,8 +7,23 @@ export const MAX_LOGIN_LENGTH = 39
 export const MAX_BRANCHES = 10
 export const MAX_BRANCH_LENGTH = 100
 export const MAX_COLUMN_NAME = 100
+// A note under the logins field looks at no more than this many characters while typing.
+export const MAX_NOTE_INPUT = 500
 
 export type Outcome<T> = { ok: true, value: T } | { ok: false, message: string }
+
+/**
+ * The logins in a text box: runs of text between commas or spaces. With a limit it
+ * stops once it has that many, so a huge paste is not split whole on every keystroke.
+ */
+export function splitLogins(input: string, max = Infinity): string[] {
+  const parts: string[] = []
+  for (const match of input.matchAll(/[^\s,]+/g)) {
+    if (parts.length === max) break
+    parts.push(match[0])
+  }
+  return parts
+}
 
 // A GitHub login: letters and digits, with single hyphens between them. No hyphen
 // at the start or the end, and never two in a row. GitHub refuses the rest, so a
@@ -22,7 +37,7 @@ const LOGIN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
  */
 export function parseLogins(input: unknown): Outcome<string[]> {
   let parts: unknown[]
-  if (typeof input === 'string') parts = input.split(/[\s,]+/)
+  if (typeof input === 'string') parts = splitLogins(input)
   else if (Array.isArray(input)) parts = input
   else return { ok: false, message: 'Write the GitHub logins separated by commas' }
 
@@ -144,4 +159,28 @@ export function syncStatusWords(enabled: boolean, logins: string): string {
   const listed = logins.split(/[\s,]+/).some(part => part.trim() !== '')
   if (!listed) return 'On, but no login is listed: every issue is ignored until one is added.'
   return 'On: cards are made from issues by the accepted logins below.'
+}
+
+/**
+ * What is saved, when the typed logins would be saved as something else: capitals,
+ * repeats or another separator. Null when they are saved as typed, or when they are
+ * not valid yet (the error line says why then).
+ */
+export function loginsSaveNote(input: string): string | null {
+  if (input.length > MAX_NOTE_INPUT) return `The logins are too long to check while typing (over ${MAX_NOTE_INPUT} characters). Saving says what is wrong.`
+  const saved = parseLogins(input)
+  if (!saved.ok) return null
+  const typed = splitLogins(input, MAX_ACCEPTED_LOGINS + 1)
+  if (typed.join(', ') === saved.value.join(', ')) return null
+  return `Will be saved as: ${saved.value.join(', ')}. Logins are saved lowercase, each one once.`
+}
+
+/** The logins help line, from the same numbers the check uses. */
+export function loginsHelpWords(): string {
+  return `Separate them with commas, up to ${MAX_ACCEPTED_LOGINS}, each up to ${MAX_LOGIN_LENGTH} characters. Logins are saved lowercase, duplicates are removed.`
+}
+
+/** The staging and production help line's limit, from the same number the check uses. */
+export function branchesLimitWords(): string {
+  return `Comma separated, up to ${MAX_BRANCHES} names.`
 }
