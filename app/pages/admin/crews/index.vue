@@ -228,14 +228,21 @@ function cancelPurge() {
           aria-label="Open sidebar"
           @click="sidebarOpen = true"
         />
-        <div>
+        <div class="flex-1 min-w-0">
           <h1 class="text-xl font-semibold text-default">
             Crews
           </h1>
           <p class="text-sm text-muted">
-            Agent teams made through the crew API. Only the instance admin sees this page.
+            Agent teams, made here or through the crew API. Only the instance admin sees this page.
           </p>
         </div>
+        <UButton
+          v-if="isInstanceAdmin"
+          to="/admin/crews/new"
+          label="New crew"
+          icon="i-lucide-plus"
+          size="sm"
+        />
       </div>
 
       <!-- Until the session is known, nothing of the admin's UI is drawn. -->
@@ -368,7 +375,12 @@ function cancelPurge() {
           >
             <p>No crews yet.</p>
             <p>
-              A crew is made through the crew API: an agent host calls <code class="text-default">POST /api/crews</code> with a crews:manage key (create one above). Each crew then appears here, with its board link.
+              <NuxtLink
+                to="/admin/crews/new"
+                class="text-primary hover:underline"
+              >New crew</NuxtLink> makes one and walks whoever sets up the agents' machine through the rest. An agent host
+              can also call <code class="text-default">POST /api/crews</code> with a crews:manage key (create one above).
+              Each crew appears here, with its board link.
             </p>
           </div>
           <ul

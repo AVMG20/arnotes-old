@@ -109,7 +109,7 @@ test('no secret file, key or local path is in the archive or in SKILL.md', () =>
   const patterns = [
     /arn_[A-Za-z0-9]{8,}/, // an API key
     /PRIVATE KEY/,
-    /forge/i, // the local forge
+    /\bforge\b/i, // the local forge, not "forgets" or forgetTab
     /\/home\//,
     /tokens/i
   ]
