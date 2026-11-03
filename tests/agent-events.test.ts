@@ -237,6 +237,19 @@ test('the frame carries ids, the flags and the cut title, and no other field', (
   assert.equal(data.assigned_to_me, true)
 })
 
+test('a move summary carries count with from still the mover; an ordinary move has no count field', async () => {
+  const { hub } = makeHub()
+  const { connection } = open(hub, key('k-pm', 'pm', 'team-a'))
+  const audience = lookups({ pm: ['team-a'] })
+  await emitAgentEventWith(hub, audience, 'pm', eventFor({ kind: 'task_moved', from: 'Sam', count: 3 }))
+  await emitAgentEventWith(hub, audience, 'pm', eventFor({ kind: 'task_moved', from: 'Sam' }))
+  const frames = connection.text().split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice('data: '.length)))
+  assert.equal(frames.length, 2)
+  assert.equal(frames[0].count, 3)
+  assert.equal(frames[0].from, 'Sam')
+  assert.equal('count' in frames[1], false)
+})
+
 test('assigned_to_me is true only when the card is assigned to this user at emit time', async () => {
   const { hub } = makeHub()
   const { connection } = open(hub, key('k-w', 'worker', 'team-a'))

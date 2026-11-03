@@ -7,6 +7,11 @@ export const AGENT_MOVE_COLUMNS = new Set(['verify', 'ready for live', 'done', '
 /** How long one run of moves on a board counts as one: the first notifies, the rest are counted. */
 export const MOVE_WINDOW_MS = 30_000
 
+/** The count a move summary carries: the moves it stands for, kept to 1..999. No count when there were none beyond the first. */
+export function summaryFields(more: number): { count?: number } {
+  return more > 0 ? { count: Math.min(999, Math.max(1, Math.floor(more))) } : {}
+}
+
 /** Whether a column is one of the four an agent always hears about, by its name. */
 export function isDefaultMoveColumn(name: string): boolean {
   return AGENT_MOVE_COLUMNS.has(name.toLowerCase())

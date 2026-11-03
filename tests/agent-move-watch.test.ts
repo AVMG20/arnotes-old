@@ -3,7 +3,7 @@
 //   node --import tsx --test tests/agent-move-watch.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MOVE_WINDOW_MS, agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, isMoveTriggerFor, moveRecipients } from '../server/utils/moveWatch'
+import { MOVE_WINDOW_MS, agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, isMoveTriggerFor, moveRecipients, summaryFields } from '../server/utils/moveWatch'
 
 const custom = { id: 'col-review', name: 'Review' }
 const verify = { id: 'col-v', name: 'Verify' }
@@ -112,6 +112,13 @@ test('a new window starts after the old one closes, and expired state is swept',
   h.advance(MOVE_WINDOW_MS)
   assert.equal(h.coalescer.offer('other', 'x'), true)
   assert.equal(h.coalescer.openWindows(), 1)
+})
+
+test('a summary count is kept to 1..999 and is absent when there were no moves beyond the first', () => {
+  assert.deepEqual(summaryFields(0), {})
+  assert.deepEqual(summaryFields(3), { count: 3 })
+  assert.deepEqual(summaryFields(5000), { count: 999 })
+  assert.deepEqual(summaryFields(2.7), { count: 2 })
 })
 
 test('a timer from an old window does not close a newer one for the same key', () => {

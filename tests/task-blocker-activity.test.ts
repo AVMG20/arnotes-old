@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { addBlocker, cutTitle, removeBlocker } from '../server/utils/taskDependencyService'
 import type { Actor, Tx } from '../server/utils/taskDependencyService'
-import { briefOf } from '../server/utils/taskActivity'
+import { briefOf, liveTitlesOf, readerDetail } from '../server/utils/taskActivity'
 import { taskDependencies, taskActivity } from '../server/db/schema'
 
 type Row = Record<string, unknown>
@@ -103,7 +103,7 @@ test('adding a link writes one activity line on the blocked task, naming the blo
   const [line] = written.activity[0]!
   assert.equal((line as Row).taskId, 'A')
   assert.equal((line as Row).kind, 'blocker_added')
-  assert.deepEqual((line as Row).detail, { to: 'Build the table' })
+  assert.deepEqual((line as Row).detail, { to: 'Build the table', blockerId: 'B' })
   assert.equal((line as Row).via, 'mcp')
 })
 
@@ -111,7 +111,7 @@ test('a team-only blocker is named as a hidden task, and its title never reaches
   const { tx, written } = fakeTx({ selects: [[blockedRow], [hiddenRow], []] })
   await addBlocker('board-1', 'A', 'C', staff, tx)
   const [line] = written.activity[0]!
-  assert.deepEqual((line as Row).detail, { to: 'a hidden task' })
+  assert.deepEqual((line as Row).detail, { to: 'a hidden task', blockerId: 'C' })
   assert.equal(JSON.stringify(written.activity).includes('Secret plan'), false)
 })
 
@@ -124,7 +124,7 @@ test('removing a link writes "no longer waits for" on the blocked task, in the s
   assert.deepEqual(result, { ok: true, blockerId: 'B' })
   const [line] = written.activity[0]!
   assert.equal((line as Row).kind, 'blocker_removed')
-  assert.deepEqual((line as Row).detail, { from: 'Build the table' })
+  assert.deepEqual((line as Row).detail, { from: 'Build the table', blockerId: 'B' })
 })
 
 test('a removal that removes nothing writes no line', async () => {
@@ -139,6 +139,39 @@ test('a long blocker title is cut on the activity line, and a short one is kept 
   const cut = cutTitle('x'.repeat(120))
   assert.equal(cut.length, 80)
   assert.ok(cut.endsWith('…'))
+})
+
+test('a removal of a hidden blocker: a customer reads a hidden task and no title, staff read the live title', async () => {
+  const { tx, written } = fakeTx({ selects: [[blockedRow], [hiddenRow]], deletes: [[{ id: 'link-1' }]] })
+  await removeBlocker('board-1', 'A', 'C', staff, tx)
+  const [line] = written.activity[0]!
+  const entry = { kind: (line as Row).kind as 'blocker_removed', detail: (line as Row).detail as Record<string, string | null> }
+  assert.deepEqual(readerDetail(entry, true, 'Secret plan'), { from: 'a hidden task' })
+  assert.deepEqual(readerDetail(entry, false, 'Secret plan'), { from: 'Secret plan' })
+  assert.equal(JSON.stringify(written.activity).includes('Secret plan'), false)
+})
+
+test('a staff reader sees the live title of a blocker that still exists, and the stored text once it is gone', () => {
+  const entry = { kind: 'blocker_added' as const, detail: { to: 'Build the table', blockerId: 'B' } }
+  assert.deepEqual(readerDetail(entry, false, 'Build the table, v2'), { to: 'Build the table, v2' })
+  assert.deepEqual(readerDetail(entry, false, null), { to: 'Build the table' })
+  assert.deepEqual(readerDetail(entry, true, 'Build the table, v2'), { to: 'Build the table' }, 'the customer keeps the stored text')
+  assert.equal(readerDetail(entry, false, 'x'.repeat(120)).to?.length, 80, 'a live title is cut like a stored one')
+  assert.deepEqual(readerDetail({ kind: 'moved', detail: { from: 'Todo', to: 'Done' } }, false, 'x'), { from: 'Todo', to: 'Done' })
+})
+
+test('a trashed blocker keeps its stored text for staff; a live one shows its title; the id never reaches a reader', () => {
+  const titles = liveTitlesOf([
+    { id: 'B', title: 'Build the table, v2', deletedAt: null },
+    { id: 'T', title: 'Trashed', deletedAt: 1700000000000 }
+  ])
+  assert.equal(titles.get('B'), 'Build the table, v2')
+  assert.equal(titles.has('T'), false)
+  const trashed = { kind: 'blocker_added' as const, detail: { to: 'Build the table', blockerId: 'T' } }
+  assert.deepEqual(readerDetail(trashed, false, titles.get('T') ?? null), { to: 'Build the table' })
+  for (const forCustomer of [true, false]) {
+    assert.equal('blockerId' in readerDetail(trashed, forCustomer, 'x'), false)
+  }
 })
 
 test('the inbox reads the two link kinds in plain words', () => {

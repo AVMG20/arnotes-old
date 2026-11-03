@@ -26,7 +26,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { projectColumns, projectTasks, taskDependencies } from '../db/schema'
 import type { ActivitySource, ProjectTask } from '../db/schema'
-import { logActivity } from './taskActivity'
+import { cutTitle, logActivity } from './taskActivity'
 import type { Audience } from './auth-helpers'
 import { checkNewLink, describeCycle, openBlockers } from './taskDependencies'
 import type { TaskLink } from './taskDependencies'
@@ -183,18 +183,16 @@ async function linksOnBoard(dbx: Db, boardId: string): Promise<TaskLink[]> {
     .where(eq(projectTasks.projectId, boardId))
 }
 
-/** A link title on the activity line, cut so one long title cannot fill it. */
-export function cutTitle(title: string): string {
-  return title.length > 80 ? `${title.slice(0, 79).trimEnd()}…` : title
-}
+export { cutTitle }
 
 /**
  * The line a link change writes on the blocked task, in the same transaction as the link. The log is
  * read by customers too, so a blocker that is not customer-visible is named as a hidden task.
  */
-async function logLink(tx: Tx, task: Pick<TaskRow, 'id' | 'projectId'>, actor: Actor, kind: 'blocker_added' | 'blocker_removed', blocker: Pick<TaskRow, 'title' | 'visibility'> | null): Promise<void> {
+async function logLink(tx: Tx, task: Pick<TaskRow, 'id' | 'projectId'>, actor: Actor, kind: 'blocker_added' | 'blocker_removed', blocker: Pick<TaskRow, 'id' | 'title' | 'visibility'> | null): Promise<void> {
   const name = blocker && blocker.visibility === 'customer' ? cutTitle(blocker.title) : HIDDEN_TASK_TITLE
-  await logActivity(task, actor.userId, [{ kind, detail: kind === 'blocker_added' ? { to: name } : { from: name } }], actor.via ?? 'ui', tx)
+  // The blocker's id rides along, so a staff reader sees its live title; readerDetail never shows it.
+  await logActivity(task, actor.userId, [{ kind, detail: { ...(kind === 'blocker_added' ? { to: name } : { from: name }), blockerId: blocker?.id ?? null } }], actor.via ?? 'ui', tx)
 }
 
 export async function addBlocker(boardId: string, blockedId: string, blockerId: string, actor: Actor, outer?: Tx): Promise<{ ok: true, link: BlockerLink } | BlockerRefusal> {
