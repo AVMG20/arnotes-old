@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
   if (!row.syncEnabled) throw createError({ statusCode: 400, message: 'Turn issue sync on first, then catch up' })
 
   if (!process.env.GITHUB_TOKEN?.trim()) {
-    return { queued: false, message: 'No GitHub token on the server, catch-up skipped.' }
+    return { queued: false, reason: 'no_token', message: 'No GitHub token on the server, catch-up skipped.' }
   }
 
   // The settings as they are now: a new catch-up of the same settings in the same millisecond is still one job.
@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
   }
   if (outcome === 'already') {
     setResponseStatus(event, 202)
-    return { queued: false, message: 'A catch-up of this repository is already queued.' }
+    return { queued: false, reason: 'already_queued', message: 'A catch-up of this repository is already queued.' }
   }
-  return { queued: true, message: 'Catch-up queued. The cards for open issues appear within a minute.' }
+  return { queued: true, reason: 'queued', message: 'Catch-up queued. The cards for open issues appear within a minute.' }
 })

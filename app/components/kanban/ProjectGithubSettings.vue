@@ -72,6 +72,7 @@ const syncError = reactive<Record<string, string>>({})
 // The last catch-up answer per repository, and the repository being queued.
 const catchUpNote = reactive<Record<string, string>>({})
 const catchingUp = ref('')
+const catchUpSkipped = reactive<Record<string, boolean>>({})
 // The refusal the server gave a form field, and the value it was given for. The words stay
 // by the field until the value changes.
 const serverRefusal = reactive<Record<string, { field: SyncField, message: string, value: string } | undefined>>({})
@@ -372,23 +373,32 @@ async function saveSync(row: LinkedRepo) {
     busyId.value = ''
   }
 }
+// The server's skip line names the problem but not the fix, so the owner gets the next step here.
+const NO_TOKEN_WORDS = 'This server has no GitHub access set up, so existing issues cannot be copied yet. Ask whoever runs the server to set GITHUB_TOKEN, then press Catch up now. New issues arrive through GitHub\'s webhook once GitHub is set up to send them to this server.'
+function plainSkipWords(reason: string, message: string): string {
+  return reason === 'no_token' ? NO_TOKEN_WORDS : message
+}
+
 // Why the catch-up button is off, in words. Empty when it can be pressed.
 function catchUpReason(row: LinkedRepo): string {
   if (!canManage.value) return 'Only the project owner and the team\'s owners and admins can run a catch-up.'
   if (!stored[row.id]?.enabled) return 'Turn issue sync on and save first.'
-  if (catchingUp.value === row.id) return 'Queuing…'
+  // The button is not disabled while queuing, so it keeps focus; catchUp ignores a second press.
   return ''
 }
 
 async function catchUp(row: LinkedRepo) {
-  if (catchUpReason(row)) return
+  if (catchingUp.value === row.id || catchUpReason(row)) return
   catchingUp.value = row.id
   catchUpNote[row.id] = ''
+  catchUpSkipped[row.id] = false
   try {
-    const result = await $fetch<{ queued: boolean, message: string }>(`${base.value}/repos/${row.id}/catchup`, { method: 'POST' })
-    catchUpNote[row.id] = result.message
+    const result = await $fetch<{ queued: boolean, reason: 'no_token' | 'already_queued' | 'queued', message: string }>(`${base.value}/repos/${row.id}/catchup`, { method: 'POST' })
+    catchUpNote[row.id] = plainSkipWords(result.reason, result.message)
+    catchUpSkipped[row.id] = result.reason === 'no_token'
   } catch (e) {
     catchUpNote[row.id] = messageOf(e, 'Could not queue the catch-up. Nothing was changed')
+    catchUpSkipped[row.id] = true
   } finally {
     catchingUp.value = ''
   }
@@ -772,6 +782,7 @@ async function catchUp(row: LinkedRepo) {
                   class="rounded-lg border border-default px-3 py-2 text-sm text-default hover:bg-elevated disabled:opacity-50"
                   :disabled="!!catchUpReason(row)"
                   :aria-describedby="catchUpReason(row) ? fieldId(row, 'catchup-reason') : undefined"
+                  :aria-busy="catchingUp === row.id"
                   data-github-sync-catchup
                   @click="catchUp(row)"
                 >
@@ -787,14 +798,14 @@ async function catchUp(row: LinkedRepo) {
                 </p>
                 <p
                   v-if="catchUpNote[row.id]"
-                  class="basis-full text-xs text-muted"
+                  :class="catchUpSkipped[row.id] ? 'basis-full text-xs text-error' : 'basis-full text-xs text-muted'"
                   role="status"
                   data-github-sync-catchup-result
                 >
                   {{ catchUpNote[row.id] }}
                 </p>
                 <p class="basis-full text-xs text-muted">
-                  A catch-up reads the open issues from GitHub and makes cards for those by accepted logins that have none. It does not change the ignored count, which counts live events only.
+                  A catch-up reads the open issues from GitHub and makes a card for each one, by an accepted login, that has no card yet. Cards you already have are not changed.
                 </p>
               </div>
             </form>
