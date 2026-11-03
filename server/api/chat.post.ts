@@ -5,6 +5,7 @@ import { CHAT_TOOLS, CHAT_SYSTEM_PROMPT } from '../utils/chatTools'
 import { trimHistory, toProviderMessages } from '../utils/chatHistory'
 import type { WireMessage, WireToolCall } from '../utils/chatHistory'
 import { DEFAULT_OPENROUTER_MODEL } from '../utils/ai'
+import { agentChatResponse } from '../utils/sprocketAgent'
 
 // Chat endpoint for the Sprocket assistant. Streams NDJSON events to the client:
 //   { type: 'delta', text }              — assistant text chunk
@@ -14,7 +15,9 @@ import { DEFAULT_OPENROUTER_MODEL } from '../utils/ai'
 //   { type: 'tool_calls', calls }        — model wants tools executed
 //   { type: 'done' }                     — stream complete
 //   { type: 'error', message }           — failure
-// Tool execution happens on the client, which owns the projects store.
+// Tool execution happens on the client, which owns the projects store. When Claude Code
+// answers (Settings → Sprocket), the run executes its own tools and sends `agent_tool`
+// events instead of `tool_calls`: see utils/sprocketAgent.ts.
 
 /**
  * A tool call whose arguments are a whole task description takes a long time
@@ -65,14 +68,24 @@ export default defineEventHandler(async (event) => {
   if (history.length === 0) throw createError({ statusCode: 400, statusMessage: 'Missing messages' })
 
   const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId))
-  const apiKey = settings?.openrouterApiKey
-  if (!apiKey) throw createError({ statusCode: 400, statusMessage: 'OpenRouter API key not configured. Add it in Settings -> AI.' })
-  const model = settings?.openrouterModel || DEFAULT_OPENROUTER_MODEL
   const thinking = body.thinking === true
-
   const today = typeof body.today === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.today)
     ? body.today
     : new Date().toISOString().slice(0, 10)
+
+  if (settings?.sprocketProvider === 'agent') {
+    return agentChatResponse({
+      userId,
+      settings: { agentKeyId: settings.sprocketAgentKeyId, model: settings.sprocketModel, effort: settings.sprocketEffort },
+      history,
+      today,
+      thinking
+    })
+  }
+
+  const apiKey = settings?.openrouterApiKey
+  if (!apiKey) throw createError({ statusCode: 400, statusMessage: 'OpenRouter API key not configured. Add it in Settings, or let Claude Code answer in Settings → Sprocket.' })
+  const model = settings?.openrouterModel || DEFAULT_OPENROUTER_MODEL
 
   const buildMessages = () => [
     { role: 'system', content: `${CHAT_SYSTEM_PROMPT}\n\nToday is ${today}.` },

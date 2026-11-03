@@ -27,6 +27,8 @@ export interface ChatMessage {
   error?: boolean
   /** Tool arguments the model is still writing (assistant turns). */
   toolProgress?: Array<{ id: string, name: string, chars: number }>
+  /** Tools a Claude Code run used while answering; it ran them itself (assistant turns). */
+  agentTools?: AgentTool[]
   /** A dropped stream is being replayed. */
   retrying?: boolean
 }
@@ -48,9 +50,16 @@ class StreamDropped extends Error {
   }
 }
 
+export interface AgentTool {
+  id: string
+  name: string
+  state: 'running' | 'done' | 'error'
+}
+
 type ChatEvent
   = | { type: 'delta' | 'reasoning', text?: string }
     | { type: 'tool_progress', calls?: Array<{ id: string, name: string, chars: number }> }
+    | { type: 'agent_tool', id?: string, name?: string, state?: AgentTool['state'] }
     | { type: 'tool_calls', calls?: ToolCallRequest[] }
     | { type: 'ping' | 'done' }
     | { type: 'error', message?: string }
@@ -291,6 +300,14 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
 // ─── Composable ──────────────────────────────────────────────
 
+// The start of a tool carries its name; its end only the id.
+function trackAgentTool(assistant: ChatMessage, evt: { id?: string, name?: string, state?: AgentTool['state'] }) {
+  const tools = assistant.agentTools ??= []
+  const known = tools.find(tool => tool.id === evt.id)
+  if (known) known.state = evt.state ?? known.state
+  else tools.push({ id: evt.id!, name: evt.name ?? 'tool', state: evt.state ?? 'running' })
+}
+
 export function useAiChat() {
   loadSession()
 
@@ -377,6 +394,7 @@ export function useAiChat() {
           if (evt.type === 'delta' && evt.text) assistant.content += evt.text
           else if (evt.type === 'reasoning' && evt.text) assistant.reasoning = (assistant.reasoning ?? '') + evt.text
           else if (evt.type === 'tool_progress') assistant.toolProgress = evt.calls ?? []
+          else if (evt.type === 'agent_tool' && evt.id) trackAgentTool(assistant, evt)
           else if (evt.type === 'tool_calls' && evt.calls) toolCalls = evt.calls
           else if (evt.type === 'error') throw new Error(evt.message ?? 'Model error')
           else if (evt.type === 'done') return toolCalls
@@ -403,6 +421,8 @@ export function useAiChat() {
       } catch (error) {
         if (signal.aborted || (error as Error).name === 'AbortError') throw error
         if (!isRetryableStreamError(error) || attempt >= MAX_STREAM_ATTEMPTS) throw error
+        // A Claude Code run executes its tools on the server as it goes: replaying could do them twice.
+        if (assistant.agentTools?.length) throw error
 
         // No tool has run yet this round and the history the server sees is
         // unchanged, so replaying is side-effect free. Clear the partial reply
@@ -411,6 +431,7 @@ export function useAiChat() {
         assistant.content = ''
         assistant.reasoning = ''
         assistant.toolProgress = undefined
+        assistant.agentTools = undefined
         assistant.retrying = true
         await delay(500 * attempt, signal)
         if (signal.aborted) throw error

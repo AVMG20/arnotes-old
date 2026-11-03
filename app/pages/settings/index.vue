@@ -175,13 +175,21 @@ function swatchStyle(color: string, selected: boolean) {
           variant="ghost"
         />
         <UButton
+          to="/settings/sprocket"
+          label="Sprocket"
+          icon="i-lucide-cog"
+          color="neutral"
+          variant="ghost"
+          size="xs"
+          class="ml-auto"
+        />
+        <UButton
           to="/settings/ai-history"
           label="AI history"
           icon="i-lucide-history"
           color="neutral"
           variant="ghost"
           size="xs"
-          class="ml-auto"
         />
       </div>
     </div>

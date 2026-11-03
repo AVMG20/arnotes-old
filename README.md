@@ -393,6 +393,23 @@ Agents get two API key permissions, **Read project secrets** and **Write project
 
 **Back up `SECRETS_ENCRYPTION_KEY` now, apart from the database.** Without it every stored secret is unreadable, for good. Docker and the Nix module generate the key on first start into the data directory (`/app/data/.secrets-key` in Docker, `/var/lib/arnotes/data/.secrets-key` under Nix). Copy it out into a password manager or a secret store rather than keeping it only beside the database dump. Do not change it: a different key cannot read the secrets stored under the old one. While the key is missing, the secrets list still shows the names with the reason they cannot be read, and every reveal, export and change is refused until the key is back.
 
+## Sprocket
+
+Sprocket is the assistant in the chat panel. **Settings → Sprocket** decides who answers:
+
+- **OpenRouter**: a model of your choice through your own OpenRouter key, paid per token.
+- **Claude Code**: the server runs `claude -p` for each message, with the model (`haiku`, `sonnet`, `opus`, or a full model name) and effort you pick. It works through this server's own MCP endpoint as one of your agents (an API key with at least board read access), so it sees and changes what that agent may, and the agent audit lists its changes under the agent's name. The run gets a token that lives only in the server's memory for that one run; no key is stored. It has no other tools, does not load your Claude Code settings or hooks, and gets none of the server's own secrets in its environment.
+
+Claude Code uses the login of the account the server runs as, so on a shared instance it is the instance admin's only. The settings:
+
+| Variable | What |
+| --- | --- |
+| `SPROCKET_CLAUDE_BIN` | the `claude` binary; default `~/.local/bin/claude`, then Homebrew, then the `PATH` |
+| `SPROCKET_CLAUDE_FOR_ALL` | `true` lets every account choose Claude Code, on that same login |
+| `SPROCKET_MCP_URL` | how the run reaches this server's MCP endpoint; default `http://localhost:$PORT/api/mcp` (or `HOST`, when it is set) |
+
+The same page has copy-ready commands to connect an agent on another machine: the MCP server, the Taskmanager skill, the crew kit with its skill, and a crew channel, plus all of it as one set of instructions to paste into Claude Code.
+
 ## Connect An AI Agent
 
 Taskmanager ships an [MCP](https://modelcontextprotocol.io) server, so Claude Code, Claude Desktop, and any other MCP client can search, read, and manage your kanban boards.

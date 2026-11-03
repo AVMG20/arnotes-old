@@ -67,6 +67,41 @@ function touchLastUsed(keyId: string, previous: number | null, now: number) {
     })
 }
 
+// Sprocket's Claude Code runs call the MCP endpoint back as the agent the person picked.
+// Each run gets its own token, held only in this process's memory and resolved to that
+// agent's key, so the audit names the agent and nothing new is stored.
+const RUN_TOKEN_TTL = 15 * 60_000
+const runTokens = new Map<string, { keyId: string, expiresAt: number }>()
+
+/** A token that acts as the key `keyId` until `revoke` is called or the TTL runs out. */
+export function issueRunToken(keyId: string): { token: string, revoke: () => void } {
+  const { token, hash } = generateApiKey()
+  runTokens.set(hash, { keyId, expiresAt: Date.now() + RUN_TOKEN_TTL })
+  return { token, revoke: () => runTokens.delete(hash) }
+}
+
+async function findKey(token: string) {
+  const hash = hashApiKey(token)
+  const run = runTokens.get(hash)
+  if (run) {
+    if (run.expiresAt <= Date.now()) {
+      runTokens.delete(hash)
+      return undefined
+    }
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, run.keyId))
+    return key
+  }
+
+  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, hash))
+  if (!key) return undefined
+  // The lookup already matched on a digest of the full secret; this compares the
+  // digests themselves so the final decision does not depend on string timing.
+  const presented = Buffer.from(hash, 'hex')
+  const stored = Buffer.from(key.keyHash, 'hex')
+  if (presented.length !== stored.length || !timingSafeEqual(presented, stored)) return undefined
+  return key
+}
+
 /**
  * Resolves the `Authorization: Bearer` key on a request into the workspace and
  * permissions it carries. Throws 401 when the key is missing, unknown, expired,
@@ -77,14 +112,8 @@ export async function authenticateApiKey(event: H3Event): Promise<ApiKeyContext>
   const unauthorized = () => createError({ statusCode: 401, message: 'Invalid or missing API key' })
   if (!token) throw unauthorized()
 
-  const [key] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, hashApiKey(token)))
+  const key = await findKey(token)
   if (!key) throw unauthorized()
-
-  // The lookup already matched on a digest of the full secret; this compares the
-  // digests themselves so the final decision does not depend on string timing.
-  const presented = Buffer.from(hashApiKey(token), 'hex')
-  const stored = Buffer.from(key.keyHash, 'hex')
-  if (presented.length !== stored.length || !timingSafeEqual(presented, stored)) throw unauthorized()
 
   const now = Date.now()
   if (key.expiresAt && key.expiresAt <= now) {

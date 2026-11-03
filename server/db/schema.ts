@@ -631,6 +631,13 @@ export const userSettings = pgTable('user_settings', {
   neutralColor: text('neutral_color').notNull().default('zinc'),
   openrouterApiKey: text('openrouter_api_key'),
   openrouterModel: text('openrouter_model').notNull().default('openai/gpt-4o-mini'),
+  // Who answers as Sprocket: OpenRouter with the key above, or Claude Code (`claude -p`)
+  // working through the MCP endpoint as one of the person's own API keys.
+  sprocketProvider: text('sprocket_provider').$type<'openrouter' | 'agent'>().notNull().default('openrouter'),
+  sprocketAgentKeyId: text('sprocket_agent_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
+  sprocketModel: text('sprocket_model').notNull().default('haiku'),
+  // null leaves the effort to Claude Code's own default
+  sprocketEffort: text('sprocket_effort'),
   updatedAt: timestamp('updated_at').notNull()
 })
 

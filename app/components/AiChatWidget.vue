@@ -9,17 +9,24 @@ const expanded = useCookie<boolean>('sprocket-expanded', { default: () => false,
 
 const { messages, thinking, busy, send, retry, stop, clearChat } = useAiChat()
 const { openrouterModel, openrouterApiKey, openrouterApiKeyMasked } = useUserSettings()
+const { settings: sprocket, answeredBy, load: loadSprocket } = useSprocketSettings()
 const router = useRouter()
 
 const input = ref('')
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const scrollEl = ref<HTMLElement | null>(null)
 
+const byAgent = computed(() => sprocket.value?.provider === 'agent')
 const hasApiKey = computed(() => !!openrouterApiKey.value || !!openrouterApiKeyMasked.value)
+const ready = computed(() => byAgent.value ? !!sprocket.value?.agentKeyId : hasApiKey.value)
 
 function toggle() {
   open.value = !open.value
-  if (open.value) nextTick(() => inputEl.value?.focus())
+  if (open.value) {
+    // A change on the settings page shows the next time the panel opens.
+    loadSprocket(true).catch(() => {})
+    nextTick(() => inputEl.value?.focus())
+  }
 }
 
 // Escape closes the panel, unless a menu or dialog on top of it owns the key.
@@ -96,6 +103,8 @@ function pendingLabel(m: ChatMessage): string {
   if (m.retrying) return 'Connection lost — reconnecting…'
   const call = m.toolProgress?.[m.toolProgress.length - 1]
   if (call?.name) return `${toolVerb[call.name] ?? call.name}…`
+  const running = m.agentTools?.findLast(tool => tool.state === 'running')
+  if (running) return `${toolVerb[running.name] ?? `Using ${running.name}`}…`
   return 'Thinking…'
 }
 
@@ -177,9 +186,19 @@ function openTarget(m: ChatMessage) {
           Sprocket
         </p>
         <p class="truncate text-xs leading-tight text-muted">
-          {{ openrouterModel }}
+          {{ answeredBy ?? openrouterModel }}
         </p>
       </div>
+
+      <UButton
+        to="/settings/sprocket"
+        icon="i-lucide-settings-2"
+        color="neutral"
+        variant="ghost"
+        size="xs"
+        aria-label="Sprocket settings"
+        title="Who answers as Sprocket"
+      />
 
       <UTooltip text="Show the model's reasoning">
         <label class="flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-elevated hover:text-default">
@@ -248,20 +267,20 @@ function openTarget(m: ChatMessage) {
         </p>
 
         <div
-          v-if="!hasApiKey"
+          v-if="!ready"
           class="mt-4 w-full rounded-lg border border-default bg-elevated/40 p-3 text-left"
         >
           <p class="text-xs text-default">
-            No OpenRouter API key yet — add one to start chatting.
+            {{ byAgent ? 'Pick the agent I work as, and I am ready.' : 'No OpenRouter API key yet. Add one, or let Claude Code answer.' }}
           </p>
           <UButton
-            label="Open AI settings"
-            icon="i-lucide-key-round"
+            label="Sprocket settings"
+            icon="i-lucide-settings-2"
             size="xs"
             color="primary"
             variant="soft"
             class="mt-2"
-            to="/settings"
+            to="/settings/sprocket"
             @click="open = false"
           />
         </div>
@@ -349,6 +368,26 @@ function openTarget(m: ChatMessage) {
             </div>
           </details>
 
+          <!-- Tools a Claude Code run used; it ran them itself -->
+          <div
+            v-if="m.agentTools?.length"
+            class="flex flex-wrap gap-1.5"
+          >
+            <span
+              v-for="tool in m.agentTools"
+              :key="tool.id"
+              class="inline-flex max-w-full items-center gap-1.5 rounded-full border border-default/60 px-2.5 py-1 text-xs"
+              :class="tool.state === 'error' ? 'text-error' : 'text-muted'"
+            >
+              <UIcon
+                :name="tool.state === 'running' ? 'i-lucide-loader-circle' : (toolIcon[tool.name] ?? 'i-lucide-wrench')"
+                class="size-3.5 shrink-0"
+                :class="{ 'animate-spin': tool.state === 'running' }"
+              />
+              <span class="truncate">{{ tool.name }}</span>
+            </span>
+          </div>
+
           <ChatMarkdown
             v-if="m.content"
             class="max-w-full text-sm leading-relaxed text-default"
@@ -357,7 +396,7 @@ function openTarget(m: ChatMessage) {
           />
 
           <div
-            v-if="m.pending && (m.retrying || m.toolProgress?.length || (!m.content && !m.reasoning))"
+            v-if="m.pending && (m.retrying || m.toolProgress?.length || m.agentTools?.some(tool => tool.state === 'running') || (!m.content && !m.reasoning))"
             class="flex items-center gap-1.5 text-xs"
             :class="m.retrying ? 'text-warning' : 'text-muted'"
           >
