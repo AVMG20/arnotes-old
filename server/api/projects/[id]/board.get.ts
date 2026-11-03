@@ -5,6 +5,8 @@ import { requireProject } from '../../../utils/projects'
 import { commentVisibilityFilter, taskVisibilityFilter } from '../../../utils/auth-helpers'
 import { listFields, loadFieldValues } from '../../../utils/customFields'
 import { githubBadgesForBoard } from '../../../utils/githubBadges'
+import { blockedStatesOn } from '../../../utils/taskDependencyService'
+import { blockedMark } from '../../../utils/mcpBlockerLinks'
 
 // Full board in one payload: columns ordered, tasks grouped by column, and the
 // per-task update count the cards render as a badge.
@@ -109,10 +111,15 @@ export default defineEventHandler(async (event) => {
   // Cards' GitHub badges, from the cache only (see githubBadges.ts); the board never calls GitHub.
   const githubBadges = await githubBadgesForBoard(id, [...tasks, ...subtasks].map(t => t.id), project.audience)
 
+  // Blocked-by marks for the cards: one batch for the whole board, not a query per task.
+  // A customer gets blocked only; the open blockers' ids are staff-only (see blockedMark).
+  const blockedStates = await blockedStatesOn(id, tasks.map(t => t.id))
+  const marks = new Map(tasks.map(t => [t.id, blockedMark(blockedStates.get(t.id) ?? { blocked: false, openBlockerIds: [] }, project.audience)]))
+
   return {
     audience: project.audience,
     columns,
-    tasks,
+    tasks: tasks.map(task => ({ ...task, ...marks.get(task.id) })),
     subtasks,
     fields,
     fieldValues,

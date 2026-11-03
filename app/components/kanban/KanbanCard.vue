@@ -4,6 +4,7 @@ import { relativeTime } from '~/composables/useRelativeTime'
 import { deletionSourceLabel } from '#shared/utils/board'
 import { descriptionDetails } from '~/utils/cardDetails'
 import { selectChipsOf } from '~/composables/useCustomFields'
+import { blockedChipLabel } from '~/utils/taskBlockers'
 import { chipStyle } from '#shared/utils/colors'
 import { dueDayToMs, isOverdueDay } from '~/utils/dueDate'
 import { boardGithubBadgesOf, boardPeople, boardPerson, boardSubtasksOf } from '~/composables/useProjects'
@@ -22,6 +23,9 @@ const props = defineProps<{
     completedAt?: number | null
     deletedAt?: number | null
     deletedVia?: 'ui' | 'mcp' | 'ai' | null
+    // Set from the board when the task waits for tasks that are not finished yet.
+    blocked?: boolean
+    blockedBy?: string[]
   }
   commentCount?: number
   // A customer contact's board: labels are shown, not recoloured, and the
@@ -121,11 +125,15 @@ const githubBadge = computed(() => {
   return { icon, label, checksTone, title: badge.title }
 })
 
+// The blocked mark: a task with an open blocker on this board. Derived on the server, never stored.
+const blockedChip = computed(() => props.task.blocked ? blockedChipLabel(props.task.blockedBy?.length ?? null) : '')
+
 // One row of small print under the card, or none at all.
 const hasMeta = computed(() =>
   props.task.tags.length > 0 || !!checklist.value || due.value !== null || !!props.commentCount
   || internal.value || (!!assignee.value && props.readonly) || subtasks.value.length > 0 || fieldChips.value.length > 0
   || !!githubBadge.value
+  || !!blockedChip.value
 )
 </script>
 
@@ -208,6 +216,14 @@ const hasMeta = computed(() =>
         data-field-chip
       >
         <span class="truncate">{{ chip.label }}</span>
+      </span>
+      <span
+        v-if="blockedChip"
+        class="flex min-w-0 items-center truncate rounded px-1.5 py-0.5 text-[0.6875rem] font-medium ring-1 ring-inset text-warning ring-warning/40"
+        title="Waits for open tasks on this board"
+        data-blocked-chip
+      >
+        <span class="truncate">{{ blockedChip }}</span>
       </span>
       <KanbanLabelChip
         v-for="tag in task.tags.slice(0, 3)"
