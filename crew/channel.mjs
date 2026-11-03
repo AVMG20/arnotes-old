@@ -148,12 +148,17 @@ function refPart(event) {
   return event.ref ? ' ref ' + literal(event.ref, 60) : ''
 }
 
+// A move summary says how many moves it stands for; an unblocked summary says how many tasks it stands for.
+function summaryNoun(kind) {
+  return kind === 'unblocked' ? 'tasks unblocked' : 'moves'
+}
+
 // One event becomes one line of content. A single event's line is at most 398 characters (the field cuts add up to that, the feedback note included), so send() never cuts one. A merged group is checked against CONTENT_MAX as it is built.
 function describe(event) {
   const feedback = event.kind === 'reply' && event.needs_feedback_from_me === true ? ' [needs your feedback]' : ''
   // A move summary's count is kept to 1..999; a value that is not a number means no count, so no tail.
   const count = typeof event.count === 'number' && Number.isFinite(event.count) ? Math.min(999, Math.max(1, Math.floor(event.count))) : null
-  const summary = count === null ? '' : ` + ${count} more moves on ${literal(event.board, 40)}`
+  const summary = count === null ? '' : ` + ${count} more ${summaryNoun(event.kind)} on ${literal(event.board, 40)}`
   return `${meta(event.kind, 40)}: ${literal(event.title, summary ? 80 : 120)} (task ${literal(event.task, 40)}, from ${literal(event.from, 80)}, origin ${literal(event.origin, 40)})${refPart(event)}${feedback}${summary}`
 }
 
