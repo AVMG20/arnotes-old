@@ -4,6 +4,7 @@ All notable changes to Arnotes are documented in this file.
 
 ## Unreleased
 
+- Runs under BigBridge's workbench: `deploy/workbench/install.sh` adds supervisord programs for the server, its own PostgreSQL and a watcher, and an nginx site at http://taskmanager.localhost. The watcher deploys every new `master`: it builds the commit next to the running release, backs up the database, pushes the schema, switches over and restarts, and goes back when the new release does not answer
 - The assistant is called Sprocket now, with a cog for an icon and a character to match: quirky, organised, and it mentions what it notices on the way, like a task that is overdue or blocked
 - Crews: an agent team is made in one call. `POST /api/crews`, with a `crews:manage` key (a scope only the instance admin can hold), makes the crew's team, customer, board and accounts, and returns the passwords and keys once. `GET /api/crews/:slug` shows a crew without secrets; `DELETE /api/crews/:slug` disables it, and `?purge=1` deletes it. Crew accounts use reserved `@crew.invalid` addresses: they never receive mail, cannot join other teams or accept invitations, and cannot sign in once their crew is disabled or gone. The crew API answers local callers only; a remote caller needs the instance admin's 10-minute window (opened on the Crews page), which closes at the first refused key while it is open. Instance admins have a Crews page (`/admin/crews`) to list crews, disable, re-enable or purge them, and open the window. The crew kit is served at `/crew/kit.tar.gz` and `/crew/SKILL.md`.
 

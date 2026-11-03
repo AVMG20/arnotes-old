@@ -335,6 +335,10 @@ bun run dev         # run the dev server with hot reload
 
 > Building the packages runs `bun install` against the npm registry inside a fixed-output derivation, so builds need network access on first run. Native dependencies differ per platform, so each one has its own hash in `nix/hashes.json` (linux × x86_64/arm64 and Apple Silicon macOS). The `nix-hashes` workflow recomputes and commits them whenever `bun.lock`/`package.json` change, so dependency bumps don't break the flake. Intel macOS (`x86_64-darwin`) was retired from nixpkgs and is not supported.
 
+## Self-Host Under Workbench
+
+On a BigBridge workbench machine, `deploy/workbench/install.sh` runs Taskmanager as workbench services: supervisord keeps it and its own PostgreSQL up, nginx serves it at http://taskmanager.localhost, and a watcher deploys every new `master` by itself, with a database backup first and a rollback when the new release does not answer. See [deploy/workbench/README.md](deploy/workbench/README.md).
+
 ## Project Settings And Rules
 
 Each project has a **Settings** page for its team; a customer's contacts have none. It has six sections:
