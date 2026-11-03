@@ -8,6 +8,7 @@
 //   id: <n>             monotonic per user: max(last + 1, Date.now()), so it does not restart
 //   event: <kind>       task_created | task_assigned | reply | task_moved | mention
 //                       pipeline_failed | pipeline_passed | merged_staging | merged_production
+//                       delivery_failed (the crew's pm only; task is null; ids, class, attempts and a code, never the reason or the payload)
 //   data: {"kind","task","board","from","origin","title","ref","needs_feedback_from_me","assigned_to_me","is_pm","is_boss"}
 //                       task and board are ids; from is the name of who did it; origin is
 //                       person|agent|github|rule on task_created, github on the GitHub kinds, null otherwise;
@@ -23,9 +24,10 @@
 // check log. The server decides who hears them: an owner (assignee or creator) and the crew's pm hear all four; the
 // crew's boss hears merged_staging, merged_production, and pipeline_passed on a card in Verify (pipeline_failed only as the card's assignee or creator).
 // Nobody else, and never a customer. A team that is not a crew gets its owners only.
-import { eq } from 'drizzle-orm'
+// delivery_failed goes to the crew's pm only (a team that is not a crew: its owners), with ids, the class, the attempts and a code; never a customer.
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { db } from '../db'
-import { apiKeys, crews, member, user } from '../db/schema'
+import { apiKeys, crews, member, projectGithubRepos, projects, user } from '../db/schema'
 import { customerIdsOf, isTeamMember } from './auth-helpers'
 import { crewAccountLive, isCrewAddress, normalizeAddress, personKeyOf } from './crewAccounts'
 import { projectPeople } from './people'
@@ -33,7 +35,10 @@ import { projectPeople } from './people'
 const CORE_EVENT_KINDS = ['task_created', 'task_assigned', 'reply', 'task_moved', 'mention'] as const
 // What GitHub did to a card's pull request. Only announceGithubEvent emits them.
 export const GITHUB_EVENT_KINDS = ['pipeline_failed', 'pipeline_passed', 'merged_staging', 'merged_production'] as const
-export const AGENT_EVENT_KINDS = [...CORE_EVENT_KINDS, ...GITHUB_EVENT_KINDS] as const
+// What a delivery of GitHub that gave up tells the crew's pm. Only announceDeliveryFailed emits it.
+export const DELIVERY_EVENT_KINDS = ['delivery_failed'] as const
+export const AGENT_EVENT_KINDS = [...CORE_EVENT_KINDS, ...GITHUB_EVENT_KINDS, ...DELIVERY_EVENT_KINDS] as const
+export type DeliveryEventKind = (typeof DELIVERY_EVENT_KINDS)[number]
 export type GithubEventKind = (typeof GITHUB_EVENT_KINDS)[number]
 export type AgentEventKind = (typeof AGENT_EVENT_KINDS)[number]
 export type AgentEventOrigin = 'person' | 'agent' | 'github' | 'rule'
@@ -65,7 +70,7 @@ export interface AgentTaskRef { id: string, title: string, assigneeId?: string |
 
 /** One thing that happened, as the code that made it knows it. */
 export interface AgentEventInput {
-  kind: Exclude<AgentEventKind, GithubEventKind>
+  kind: Exclude<AgentEventKind, GithubEventKind | DeliveryEventKind>
   board: AgentBoard
   task: AgentTaskRef
   /** Who did it, by name. */
@@ -92,7 +97,7 @@ export interface AgentEventRecord {
   at: number
   kind: AgentEventKind
   board: string
-  task: string
+  task: string | null
   from: string | null
   origin: AgentEventOrigin | null
   title: string
@@ -807,6 +812,104 @@ export function announceGithubEvent(input: GithubEventInput): void {
   emitInBackground(() => emitGithubEventWith(agentEventHub, githubDatabaseLookups, input))
 }
 
+/** A delivery that gave up, as the crew's pm hears of it: ids, the repository, the class, the attempts and a short code. */
+export interface DeliveryFailure {
+  deliveryId: string
+  event: string
+  owner: string
+  repo: string
+  class: 'transient' | 'permanent'
+  attempts: number
+  /** A short code for the reason (failureCode in githubDeliveryFailures): never the reason text. */
+  code: string
+}
+
+/** The lookups of a delivery notice: the GitHub ones, the board a repository is linked to, and a team's owners. */
+export interface DeliveryLookups extends GithubLookups {
+  linkedBoard(owner: string, repo: string): Promise<AgentBoard | null>
+  teamOwners(teamId: string): Promise<string[]>
+}
+
+/** Text from GitHub or a request: control characters stripped, cut to max characters. */
+function plainText(text: string, max: number): string {
+  return Array.from(text.replace(CONTROL, '')).slice(0, max).join('')
+}
+
+/**
+ * Keeps a delivery_failed notice for the crew's pm only. A team that is not a crew gets it for its owners; a personal
+ * board for its owner. The frame carries ids, the repository, the class, the attempts and a code, never the reason
+ * text or the payload. Returns how many people it was kept for. No database is read while nobody is watched.
+ */
+export async function emitDeliveryFailedWith(hub: AgentEventHub, lookups: DeliveryLookups, input: DeliveryFailure): Promise<number> {
+  if (!hub.hasWatchers()) return 0
+  const board = await lookups.linkedBoard(input.owner, input.repo)
+  if (!board) return 0
+  const crew = board.teamId ? await lookups.crewPeople(board.teamId) : []
+  const keyOf = new Map(crew.map(person => [person.userId, person.key]))
+  let recipients: string[]
+  if (!board.teamId) recipients = [board.userId]
+  else if (crew.length) recipients = crew.filter(person => person.key === 'pm').map(person => person.userId)
+  else recipients = await lookups.teamOwners(board.teamId)
+  const title = cleanEventText(`${plainText(input.event, 40)} ${plainText(input.owner, 100)}/${plainText(input.repo, 100)}: ${input.class}, ${input.attempts} attempts (${plainText(input.code, 40)})`)
+  const ref = refText(input.deliveryId)
+  let kept = 0
+  for (const userId of new Set(recipients)) {
+    if (!hub.watches(userId)) continue
+    const staff = board.teamId ? await lookups.isMember(userId, board.teamId) : board.userId === userId
+    if (!staff) continue
+    hub.publish(userId, {
+      kind: 'delivery_failed',
+      board: board.id,
+      task: null,
+      from: null,
+      origin: 'github',
+      title,
+      ref,
+      needsFeedbackFromMe: false,
+      assignedToMe: false,
+      isPm: keyOf.get(userId) === 'pm',
+      isBoss: false,
+      audience: 'staff',
+      teamId: board.teamId,
+      customerId: null
+    })
+    kept++
+  }
+  return kept
+}
+
+/**
+ * The board and people of a delivery notice in the database: the first project that links the repository, its
+ * team's crew (or owners), and the membership checks of GithubLookups.
+ */
+export const databaseDeliveryLookups: DeliveryLookups = {
+  ...githubDatabaseLookups,
+  async linkedBoard(owner, repo) {
+    const [row] = await db.select({ id: projects.id, userId: projects.userId, teamId: projects.teamId, customerId: projects.customerId })
+      .from(projectGithubRepos)
+      .innerJoin(projects, eq(projects.id, projectGithubRepos.projectId))
+      .where(and(
+        sql`lower(${projectGithubRepos.owner}) = ${owner.toLowerCase()}`,
+        sql`lower(${projectGithubRepos.repo}) = ${repo.toLowerCase()}`
+      ))
+      .orderBy(asc(projectGithubRepos.createdAt))
+      .limit(1)
+    return row ?? null
+  },
+  async teamOwners(teamId) {
+    const rows = await db.select({ userId: member.userId }).from(member)
+      .where(and(eq(member.organizationId, teamId), eq(member.role, 'owner')))
+    return rows.map(row => row.userId)
+  }
+}
+
+/**
+ * A delivery of GitHub gave up for good and its row is written. Off the request path: it never throws, and it reads
+ * nothing while nobody is watched. The consumer calls it only for a row that did not exist before.
+ */
+export function announceDeliveryFailed(input: DeliveryFailure): void {
+  emitInBackground(() => emitDeliveryFailedWith(agentEventHub, databaseDeliveryLookups, input))
+}
 /** The name of who did a thing, for the event's `from`. */
 export async function actorNameOf(userId: string | null): Promise<string | null> {
   if (!userId) return null

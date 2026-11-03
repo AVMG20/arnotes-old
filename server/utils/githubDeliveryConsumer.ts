@@ -44,7 +44,9 @@ import { DeliveryError, repositoryOf } from './githubCards'
 import type { DeliveryJob } from './githubCards'
 import { DELIVERY_LIMIT, errorSummary, MAX_ATTEMPTS, retryQueueForAttempt } from './githubDeliveryQueueTypes'
 import type { ConsumeHandler, DeliveryQueue, Disposition, HandedMessage } from './githubDeliveryQueueTypes'
+import { failureCode } from './githubDeliveryFailures'
 import type { FailureClass, FailureRows } from './githubDeliveryFailures'
+import { announceDeliveryFailed } from './agentEvents'
 
 export { MAX_ATTEMPTS } from './githubDeliveryQueueTypes'
 /** One delivery's whole run: its database calls and its work. Must be shorter than ADAPTER_TIMEOUT_MS. */
@@ -126,6 +128,26 @@ class Abandoned extends Error {
 
 function cutText(text: string, max: number): string {
   return text.replace(/[\r\n\t]+/g, ' ').slice(0, max)
+}
+
+/**
+ * Tells the crew's pm that a delivery gave up for good. Called only for a row that did not exist before, after the row
+ * is written, and never throws: the failed path does not wait for it.
+ */
+function tellPm(failure: { deliveryId: string, event: string, owner: string, repo: string, class: FailureClass, attempts: number, reason: string }): void {
+  try {
+    announceDeliveryFailed({
+      deliveryId: failure.deliveryId,
+      event: failure.event,
+      owner: failure.owner,
+      repo: failure.repo,
+      class: failure.class,
+      attempts: failure.attempts,
+      code: failureCode(failure.reason)
+    })
+  } catch (error) {
+    console.error(`[github] could not tell the PM of ${failure.deliveryId || '(no id)'} (${errorSummary(error)})`)
+  }
 }
 
 /** The body as the webhook received it, parsed. Null when it is not JSON (a poison body). */
@@ -251,6 +273,8 @@ export function createDeliveryConsumer(queue: Pick<DeliveryQueue, 'publish'>, de
     // the last failure is kept; an abandoned attempt writes nothing (its adapter has already written the row).
     const giveUp = async (kind: FailureClass, reason: string): Promise<Disposition> => {
       const at = now()
+      // A row that did not exist before: the PM is told once (tellPm); a retried row that fails again is not news.
+      const fresh = !record
       try {
         if (ctx.signal.aborted) throw new Abandoned()
         await detached(deps.failures.upsertFailed({
@@ -266,6 +290,7 @@ export function createDeliveryConsumer(queue: Pick<DeliveryQueue, 'publish'>, de
           firstSeenAt: at,
           failedAt: at
         }), 'recording the failure')
+        if (fresh) tellPm({ deliveryId: id, event: message.event, owner: parsed?.repo?.owner ?? '', repo: parsed?.repo?.repo ?? '', class: kind, attempts: Math.min(made, MAX_ATTEMPTS), reason })
       } catch (error) {
         stopIfAbandoned(error)
         return retryLater(message, key, `could not record the failure (${errorSummary(error)})`, true)
@@ -429,6 +454,8 @@ export function createDeliveryConsumer(queue: Pick<DeliveryQueue, 'publish'>, de
   async function beforeFail(message: HandedMessage, reason: string): Promise<void> {
     const parsed = parseBody(message.body)
     const at = now()
+    const kind: FailureClass = reason === 'body over size cap' ? 'permanent' : 'transient'
+    const fresh = !(await detached(deps.failures.exists(message.deliveryId), 'reading the record'))
     await detached(deps.failures.upsertFailed({
       deliveryId: message.deliveryId,
       event: message.event,
@@ -436,12 +463,13 @@ export function createDeliveryConsumer(queue: Pick<DeliveryQueue, 'publish'>, de
       repo: parsed?.repo?.repo ?? null,
       repoId: parsed && parsed.repoId > 0 ? parsed.repoId : null,
       attempts: Math.min(message.attempt + 1, MAX_ATTEMPTS),
-      class: reason === 'body over size cap' ? 'permanent' : 'transient',
+      class: kind,
       reason: cutText(reason, 300),
       payload: message.body.toString('utf8'),
       firstSeenAt: at,
       failedAt: at
     }), 'recording the failure')
+    if (fresh) tellPm({ deliveryId: message.deliveryId, event: message.event, owner: parsed?.repo?.owner ?? '', repo: parsed?.repo?.repo ?? '', class: kind, attempts: Math.min(message.attempt + 1, MAX_ATTEMPTS), reason })
   }
 
   return {

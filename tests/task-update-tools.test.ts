@@ -155,7 +155,7 @@ describe('the served skill', () => {
     assert.match(skill, /`edit_task_update`/)
     assert.match(skill, /`delete_task_update`/)
     assert.match(skill, /gone at once/)
-    assert.match(skill, /by its author only/)
+    assert.match(skill, /can be changed or removed by its author/)
   })
 })
 

@@ -12,7 +12,7 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
   {
     title: 'Task updates',
     match: tool => /^(edit|delete)_task_update$/.test(tool.name),
-    note: 'An update on a task can be changed or removed by its author only: you may change what you posted, or what your key\'s owner posted through an agent. A customer contact may change only the customer-visible updates they wrote. An edit keeps the update\'s visibility and reply, marks it edited with the time, and does not tell anyone again; the old text is not kept. A delete removes the update for good, with no trash, and a reply to it stays and shows that its target was deleted. Both are recorded in the key owner\'s Inbox without the text. Read the thread with get_task to find the update id.'
+    note: 'An update on a task can be changed or removed by its author: you may change what you posted, or what your key\'s owner posted through an agent. The board\'s owner, or a team owner or admin, may change or remove any update on that board. A customer contact may change only the customer-visible updates they wrote. An edit keeps the update\'s visibility and reply, marks it edited with the time, and does not tell anyone again; the old text is not kept. A delete removes the update for good, with no trash, and a reply to it stays and shows that its target was deleted. Both are recorded in the key owner\'s Inbox without the text. Read the thread with get_task to find the update id.'
   },
   { title: 'My tasks and my inbox', match: tool => /^(my_tasks|list_notifications|mark_notifications_read)$/.test(tool.name) },
   { title: 'Custom fields', match: tool => /_fields?$/.test(tool.name) },
@@ -22,9 +22,14 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
     note: 'A task can link GitHub issues, pull requests, branches and workflow runs. Each link shows what GitHub says now (state, pull requests, review and check status, branch position, run status), fetched on the server and cached, so the token never reaches you. Links follow the same audience rule as the task: a customer contact sees only the links marked for customers, and linking or unlinking is for the team.'
   },
   {
+    title: 'GitHub deliveries',
+    match: tool => /^(list_failed_deliveries|get_failed_delivery|retry_failed_delivery|discard_failed_delivery|github_queue_status)$/.test(tool.name),
+    note: 'GitHub changes reach Taskmanager as deliveries. One that cannot be applied after its attempts is kept for the PM, any team member may list and read it; retry it once when its cause is gone, or discard it with a reason, is for the crew\'s pm key only. You see only the deliveries of the repositories linked to projects your team works on; any other repository is refused. A retry sends the stored payload back once. Reading one delivery and each retry or discard are written to the agent audit with their outcome; list and status are not. The payload itself is never returned in full.'
+  },
+  {
     title: 'Rules',
     match: tool => /_rules?$|_rule_runs$/.test(tool.name),
-    note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired.'
+    note: 'Rules run when something happens on a board: a trigger, then the conditions that must hold, then the actions, in order. Anyone on the team may create and change them. Only the project owner may use set_visibility in a rule, which makes a task customer-visible. A rule can be switched off with update_rule and "enabled" alone, and list_rule_runs shows what it did each time it fired. The valid triggers, conditions and actions, with their fields, are listed in the create_rule tool description and in every refusal.'
   },
   {
     title: 'Secrets',

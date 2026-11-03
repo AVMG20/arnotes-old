@@ -8,7 +8,7 @@ import type { Project, ProjectRule } from '../db/schema'
 import { findStaffBoard, touchBoard } from './mcpBoardTools'
 import { McpToolError, newId, optionalBoolean, optionalLimit, requireString } from './mcpToolKit'
 import type { McpToolDefinition } from './mcpToolKit'
-import { ACTION_KINDS, CONDITION_KINDS, MAX_ACTIONS, MAX_CONDITIONS, TRIGGER_KINDS, VISIBILITIES, validateRule } from './ruleSpec'
+import { ACTION_KINDS, CONDITION_KINDS, KNOWN_ACTIONS, KNOWN_CONDITIONS, KNOWN_TRIGGERS, MAX_ACTIONS, MAX_CONDITIONS, TRIGGER_KINDS, VISIBILITIES, validateRule } from './ruleSpec'
 import { RUN_PAGE_SIZE, lastRunOf, loadRuleFrame, loadRules, nextRulePosition, ruleLimitMessage, ruleValues, ruleView, runView, storedRule } from './ruleStore'
 import type { ApiKeyContext } from './api-keys'
 
@@ -67,7 +67,7 @@ export const MCP_RULE_TOOLS: McpToolDefinition[] = [
   {
     name: 'create_rule',
     title: 'Add a rule',
-    description: 'Add an automation rule to a board: when a trigger happens and the conditions hold, the actions run. The rule is checked the same way as in Settings, and a refused rule comes back with the sentences that say what to fix. Only the project owner may use set_visibility.',
+    description: 'Add an automation rule to a board: when a trigger happens and the conditions hold, the actions run. The rule is checked the same way as in Settings, and a refused rule comes back with the sentences that say what to fix. Only the project owner may use set_visibility. Triggers: ' + KNOWN_TRIGGERS + '. Conditions: ' + KNOWN_CONDITIONS + '. Actions: ' + KNOWN_ACTIONS + '.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -110,7 +110,7 @@ export const MCP_RULE_TOOLS: McpToolDefinition[] = [
   {
     name: 'update_rule',
     title: 'Change a rule',
-    description: 'Change a rule on a board: send only the parts that change (name, trigger, conditions, actions) and they are checked together with the rest of the rule. Sending just "enabled" switches it on or off. Only the project owner may use set_visibility.',
+    description: 'Change a rule on a board: send only the parts that change (name, trigger, conditions, actions) and they are checked together with the rest of the rule. Sending just "enabled" switches it on or off. Only the project owner may use set_visibility. Triggers: ' + KNOWN_TRIGGERS + '. Conditions: ' + KNOWN_CONDITIONS + '. Actions: ' + KNOWN_ACTIONS + '.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {

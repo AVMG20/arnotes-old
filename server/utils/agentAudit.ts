@@ -72,6 +72,9 @@ function secretsSummary(value: Loose): string {
 // What a person reads for each tool. Anything not listed falls back to the
 // tool's title. Secrets only ever name themselves and count: never a value.
 const SUMMARIES: Record<string, Summary> = {
+  get_failed_delivery: v => `Read GitHub delivery ${v.item?.id}`,
+  retry_failed_delivery: v => `Retry of GitHub delivery ${v.deliveryId}: ${v.message}`,
+  discard_failed_delivery: v => `Discard of GitHub delivery ${v.deliveryId}: ${v.message}`,
   create_board: v => `Created the board ${quote(v.name)}`,
   update_board: v => v.renamedFrom ? `Renamed the board to ${quote(v.name)}` : `Changed the board ${quote(v.name)}`,
   create_column: v => `Added the column ${quote(v.column?.name)}`,
@@ -89,8 +92,8 @@ const SUMMARIES: Record<string, Summary> = {
   delete_task: () => 'Deleted the task (in the trash for 7 days)',
   restore_task: v => v.alreadyActive ? 'Restored the task (it was not in the trash)' : 'Restored the task from the trash',
   post_message: v => `${v.message?.replyTo ? 'Replied to a message' : 'Posted a message'}: ${quote(v.message?.title ?? notificationExcerpt(v.message?.body ?? ''))}`,
-  edit_task_update: v => `Edited an update (id ${v.update?.id}, ${v.update?.length} characters), marked edited`,
-  delete_task_update: v => `Deleted an update for ${v.update?.visibility === 'customer' ? 'the customer' : 'the team'} (id ${v.update?.id}, ${v.update?.length} characters)`,
+  edit_task_update: v => `Edited an update (id ${v.update?.id}, ${v.update?.length} characters), marked edited${v.byOwner ? ', edited by owner' : ''}`,
+  delete_task_update: v => `Deleted an update for ${v.update?.visibility === 'customer' ? 'the customer' : 'the team'} (id ${v.update?.id}, ${v.update?.length} characters)${v.byOwner ? ', deleted by owner' : ''}`,
   post_task_update: v => `Posted an update${v.update?.visibility === 'customer' ? ' for the customer' : ''}: ${quote(v.update?.excerpt)}`,
   post_status_update: v => `Posted a status update (${v.update?.status}): ${quote(notificationExcerpt(v.update?.body ?? ''))}`,
   create_field: v => `Added the field ${quote(v.field?.name)} (${v.field?.type})`,
