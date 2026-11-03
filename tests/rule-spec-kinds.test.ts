@@ -54,10 +54,11 @@ for (const tool of ['create_rule', 'update_rule']) {
     const block = toolSource.slice(start, toolSource.indexOf('inputSchema', start))
     assert.ok(block.includes('KNOWN_TRIGGERS') && block.includes('KNOWN_CONDITIONS') && block.includes('KNOWN_ACTIONS'),
       `${tool} description must read all three kind lists`)
-    for (const kind of [...TRIGGER_KINDS, ...CONDITION_KINDS, ...ACTION_KINDS]) {
-      assert.ok(KNOWN_TRIGGERS.includes(kind) || KNOWN_CONDITIONS.includes(kind) || KNOWN_ACTIONS.includes(kind), `kind ${kind} missing from the lists`)
-    }
-    for (const kind of CONDITION_KINDS) assert.ok(KNOWN_CONDITIONS.includes(`${kind}:`) || KNOWN_CONDITIONS.includes(kind), `condition ${kind} not listed`)
+    // Each kind is checked against its own list: items read "kind" or "kind: fields".
+    const listed = (list: string) => list.split('; ').map(item => item.split(':')[0])
+    for (const kind of TRIGGER_KINDS) assert.ok(listed(KNOWN_TRIGGERS).includes(kind), `trigger ${kind} not in the trigger list`)
+    for (const kind of CONDITION_KINDS) assert.ok(listed(KNOWN_CONDITIONS).includes(kind), `condition ${kind} not in the condition list`)
+    for (const kind of ACTION_KINDS) assert.ok(listed(KNOWN_ACTIONS).includes(kind), `action ${kind} not in the action list`)
   })
 }
 
