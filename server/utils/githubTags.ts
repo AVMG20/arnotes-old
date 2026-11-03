@@ -13,8 +13,8 @@
 // Each card's tag change and its activity lines are one transaction; the agent event is sent after that commit,
 // and a failure to send it is logged, never retried (a retry would find the tags set and not send it again).
 //
-// Reads. A real read of GitHub (the link refresh, the pull request, its check runs) is one token of the repository's
-// per-minute budget (GITHUB_TAG_READS_PER_MINUTE, 60 by default). A read is reused for the same pull request and
+// Reads. A real read of GitHub (the pull request, its check runs) is one token of the repository's
+// per-minute budget (GITHUB_TAG_READS_PER_MINUTE, 60 by default); the link refresh has a bucket of its own of the same size. A read is reused for the same pull request and
 // head commit when it was made less than COALESCE_MS ago and after the delivery was received, so a burst of check
 // events makes about one read. Each GitHub failure is transient (a retry spaces the reads out); a 404 means the
 // thing is gone and is ignored; an answer without the parts a tag needs is permanent.
@@ -240,6 +240,8 @@ export interface TagDeps {
   announce?: (input: GithubEventInput) => void
   /** The read budget. One per process by default (readBudgetFromEnv). */
   budget?: ReadBudget
+  /** The link refresh has its own budget, so a spent tag budget cannot lose a rule firing. One per process by default. */
+  refreshBudget?: ReadBudget
 }
 
 export type TagOutcome = 'ignored' | 'done'
@@ -253,6 +255,7 @@ export const liveGithub: TagGithub = {
 }
 
 let defaultBudget: ReadBudget | null = null
+let defaultRefreshBudget: ReadBudget | null = null
 
 // The reads of a pull request by head commit: reused for COALESCE_MS, when they started after the delivery came in.
 interface Snapshot {
@@ -307,6 +310,7 @@ interface ReadyDeps extends TagDeps {
   github: TagGithub
   announce: (input: GithubEventInput) => void
   budget: ReadBudget
+  refreshBudget: ReadBudget
 }
 
 function field(value: unknown, key: string): unknown {
@@ -395,14 +399,19 @@ async function snapshotOf(owner: string, repo: string, number: number, sha: stri
   const hit = snapshots.get(key)
   if (hit && hit.at >= job.receivedAt && started - hit.at < COALESCE_MS && (!wantChecks || hit.checks !== null)) return hit
 
-  if (!deps.budget.take(`${owner}/${repo}`.toLowerCase())) {
-    throw new DeliveryError('transient', `pull ${number}: the GitHub reads of this repository are over the per-minute limit`)
+  // The link refresh has its own bucket and runs first, so a spent tag budget cannot lose a rule firing.
+  const refreshAllowed = deps.refreshBudget.take(`${owner}/${repo}`.toLowerCase())
+  if (!refreshAllowed) {
+    console.error(`GitHub delivery ${job.deliveryId} (${event}): the link refresh is over its per-minute limit, so the rules may miss this change`)
   }
   try {
-    await deps.github.refresh(event, payload)
+    if (refreshAllowed) await deps.github.refresh(event, payload)
   } catch (error) {
     // The cache refresh is best effort, as it was in the webhook: the tags below read GitHub themselves.
     console.error(`GitHub delivery ${job.deliveryId} (${event}): the link refresh failed (${error instanceof Error ? error.name : 'non-Error'})`)
+  }
+  if (!deps.budget.take(`${owner}/${repo}`.toLowerCase())) {
+    throw new DeliveryError('transient', `pull ${number}: the GitHub reads of this repository are over the per-minute limit`)
   }
   const facts = await guarded(() => deps.github.pull(owner, repo, number), number)
   const checks = wantChecks && facts.kind === 'ok' && (event === 'pull_request' || facts.value.headSha === sha) ? await guarded(() => deps.github.checks(owner, repo, number, sha), number) : null
@@ -502,14 +511,15 @@ export async function processTagDelivery(job: DeliveryJob, deps: TagDeps): Promi
     ...deps,
     github: deps.github ?? liveGithub,
     announce: deps.announce ?? announceGithubEvent,
-    budget: deps.budget ?? (defaultBudget ??= readBudgetFromEnv())
+    budget: deps.budget ?? (defaultBudget ??= readBudgetFromEnv()),
+    refreshBudget: deps.refreshBudget ?? (defaultRefreshBudget ??= readBudgetFromEnv())
   }
   const { store, signal } = ready
   const failures: DeliveryError[] = []
   let handled = false
 
   // The works of this delivery: one per pull request it is about.
-  const works: { number: number, sha: string, event: string, payload: unknown, work: (facts: PullFacts | null, checks: ChecksState | null) => PullWork | null, wantChecks: boolean }[] = []
+  const works: { number: number, sha: string, event: string, payload: unknown, work: (facts: PullFacts | null, checks: ChecksState | null) => PullWork | null, wantChecks: boolean, known?: { author: string, sameRepo: boolean } }[] = []
   if (job.event === 'pull_request') {
     const pull = pullRequestEvent(job.payload)
     if (!pull || !validCommitSha(pull.headSha)) return 'ignored'
@@ -520,6 +530,7 @@ export async function processTagDelivery(job: DeliveryJob, deps: TagDeps): Promi
       event: job.event,
       payload: job.payload,
       wantChecks: PULL_ACTIONS.has(pull.action),
+      known: { author: pull.author, sameRepo: pull.headRepo.toLowerCase() === `${owner}/${repo}`.toLowerCase() },
       work: (_facts, checks) => ({
         number: pull.number,
         sha: pull.headSha,
@@ -575,6 +586,9 @@ export async function processTagDelivery(job: DeliveryJob, deps: TagDeps): Promi
     stopIfAborted(signal)
     // Nothing here to tag: no card is linked to this pull request or to an issue of this repository. No GitHub read.
     if (!(await store.linkedAt(owner, repo, item.number))) continue
+    // A stranger pull request that no card is linked to is not read at all: its keywords would be ignored anyway.
+    const known = item.known
+    if (known && !(known.sameRepo && [...links.values()].some(link => link.acceptedLogins.includes(known.author.toLowerCase()))) && !(await store.linkedCards(owner, repo, item.number, [])).some(found => found.kind === 'pull')) continue
     const snapshot = await snapshotOf(owner, repo, item.number, item.sha, item.wantChecks, item.event, item.payload, job, ready)
     if (snapshot.facts.kind === 'missing') continue
     if (snapshot.facts.kind !== 'ok') throw readFailure(item.number, 'the pull request could not be read', snapshot.facts)
