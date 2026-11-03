@@ -68,7 +68,7 @@ function pathOfBlockers(byTask: Map<string, string[]>, from: string, target: str
   const queue = [from]
   const seen = new Set<string>([from])
   for (let i = 0; i < queue.length; i++) {
-    const current = queue[i]
+    const current = queue[i]!
     if (current === target) {
       const path = [current]
       let step = current
