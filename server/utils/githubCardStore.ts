@@ -2,7 +2,7 @@
 // same as one made in the app: its activity line, the agent event, the live update of the board.
 // A card change and its activity line are one transaction, so a crash leaves neither or both.
 import { randomUUID } from 'node:crypto'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { githubDeliveries, githubLinks, projectColumns, projectGithubRepos, projects, projectTasks, taskActivity, taskComments } from '../db/schema'
 import type { ProjectTask } from '../db/schema'
@@ -215,10 +215,10 @@ export function makeDatabaseCardStore(database: CardDatabase): GithubCardStore {
 
     async hasUpdate(task, marker) {
       // Only the tail counts: a marker pasted into the middle of a comment does not match.
-      // The syncer writes its markers as the owner's app updates (createdVia 'ui'), so an agent's update never counts.
+      // The syncer writes its markers as the owner's account with createdVia 'github' (older ones 'ui'), so an agent's update never counts.
       const [row] = await database.select({ id: taskComments.id })
         .from(taskComments)
-        .where(and(eq(taskComments.taskId, task.id), eq(taskComments.createdVia, 'ui'), sql`right(${taskComments.body}, ${marker.length}) = ${marker}`))
+        .where(and(eq(taskComments.taskId, task.id), inArray(taskComments.createdVia, ['ui', 'github']), sql`right(${taskComments.body}, ${marker.length}) = ${marker}`))
         .limit(1)
       return row !== undefined
     },
@@ -234,7 +234,7 @@ export function makeDatabaseCardStore(database: CardDatabase): GithubCardStore {
         userId: project.userId,
         body,
         visibility: task.visibility,
-        createdVia: 'ui',
+        createdVia: 'github',
         createdAt: Date.now()
       })
       // Saved above, so the update is never lost to a failed notification; the notification is logged if it fails.

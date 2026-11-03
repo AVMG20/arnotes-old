@@ -56,6 +56,8 @@ export interface ProjectColumn {
 
 /** Where a delete came from, so the trash can name it. */
 export type DeletionSource = 'ui' | 'mcp' | 'ai'
+// A task update's writer: the same, and 'github' for the card syncer's copies.
+export type CommentSource = DeletionSource | 'github'
 // Where an activity line came from; GitHub for the card syncer.
 export type ActivitySource = 'ui' | 'mcp' | 'ai' | 'github'
 
@@ -104,7 +106,7 @@ export interface TaskComment {
   userName: string | null
   // How the update was posted, and — when that was an agent over MCP — the name
   // of the key it used, which is what the thread signs it with.
-  createdVia?: DeletionSource | null
+  createdVia?: CommentSource | null
   keyName?: string | null
   // The comment this one answers, previewed for this viewer; null when it answers none or the parent is hidden from them.
   replyTo?: CommentReplyPreview | null

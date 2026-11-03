@@ -7,7 +7,7 @@ import { commentVisibilityFilter } from '../../../utils/auth-helpers'
 import { publishFromEvent } from '../../../utils/realtime'
 import { notifyComment } from '../../../utils/notifyEvents'
 import { fireRules, newRuleChain } from '../../../utils/ruleEngine'
-import { attachReplyPreviews, resolveReplyTarget } from '../../../utils/taskComments'
+import { attachReplyPreviews, resolveReplyTarget, signedName } from '../../../utils/taskComments'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -35,7 +35,8 @@ export default defineEventHandler(async (event) => {
       .leftJoin(apiKeys, eq(apiKeys.id, taskComments.apiKeyId))
       .where(and(eq(taskComments.taskId, id), commentVisibilityFilter(project.audience)))
       .orderBy(asc(taskComments.createdAt))
-    return attachReplyPreviews(id, rows, project.audience)
+    // A GitHub copy is signed GitHub here too, not with the owner's account (see signedName).
+    return attachReplyPreviews(id, rows.map(row => ({ ...row, userName: signedName(row) })), project.audience)
   }
 
   if (event.method !== 'POST') {
