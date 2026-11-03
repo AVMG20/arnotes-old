@@ -1069,3 +1069,23 @@ export const crewApiAudit = pgTable(
   },
   table => [index('crew_api_audit_at_idx').on(table.at)]
 )
+
+// A "blocked by" link (GH #36): the task on the left waits for the task on the right. Only the
+// links are stored; whether a task is blocked is derived from them, so it cannot go stale.
+// Same board only, and a link is added or removed by staff only (enforced by the routes, not here).
+export const taskDependencies = pgTable(
+  'task_dependencies',
+  {
+    id: text('id').primaryKey(),
+    blockedTaskId: text('blocked_task_id').notNull().references(() => projectTasks.id, { onDelete: 'cascade' }),
+    blockerTaskId: text('blocker_task_id').notNull().references(() => projectTasks.id, { onDelete: 'cascade' }),
+    createdBy: text('created_by').references(() => user.id, { onDelete: 'set null' }),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull()
+  },
+  table => [
+    uniqueIndex('task_dependencies_pair_idx').on(table.blockedTaskId, table.blockerTaskId),
+    index('task_dependencies_blocker_idx').on(table.blockerTaskId)
+  ]
+)
+
+export type TaskDependency = typeof taskDependencies.$inferSelect

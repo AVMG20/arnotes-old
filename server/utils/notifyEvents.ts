@@ -1,11 +1,12 @@
 // Who hears about what. Each event names the people it concerns; `notify` then
 // drops whoever did it and whoever may not read it.
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { db } from '../db'
-import { projectColumns, projectMessages, projectTasks, taskComments, user } from '../db/schema'
+import { projectColumns, projectMessages, projectRules, projectTasks, taskComments, user } from '../db/schema'
 import { notificationExcerpt, notify } from './notifications'
 import { projectPeople } from './people'
-import { agentEventHub, emitAgentEventAsync, emitInBackground, replyRecipients } from './agentEvents'
+import { agentEventHub, emitAgentEventAsync, emitInBackground, githubDatabaseLookups, replyRecipients } from './agentEvents'
+import { agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, moveRecipients } from './moveWatch'
 import type { ReplyWriter } from './agentEvents'
 
 type Project = { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
@@ -157,25 +158,48 @@ export async function notifyTaskChange(project: Project, task: Task, actorId: st
   emitInBackground(() => tellAgentsOfMove(project, task, actorId, changes))
 }
 
-// The columns an agent hears about when a card reaches them.
-const AGENT_MOVE_COLUMNS = new Set(['verify', 'ready for live', 'done', 'bugs'])
+// The people a move reaches: the card's people and the crew pm, coalesced per board, person and visibility.
+// The first move in a window goes out at once, the rest of the window is counted (moveWatch.ts).
+type MovePayload = { recipient: string, board: Project, task: Task, from: string, customerVisible: boolean }
+const moveCoalescer = createMoveCoalescer<MovePayload>({
+  send: (payload, more) => {
+    emitInBackground(() => emitAgentEventAsync(payload.recipient, {
+      kind: 'task_moved',
+      board: payload.board,
+      task: payload.task,
+      // A summary has no mover of its own: its count goes where the mover's name goes.
+      from: more > 0 ? `${more} more moves on ${payload.board.name}` : payload.from,
+      customerVisible: payload.customerVisible
+    }))
+  }
+})
 
+// The agents hear of a card that reached a column they watch for: its owners and the crew pm hear of it.
+async function tellAgentsOfMove(project: Project, task: Task, actorId: string | null, changes: string[]) {
+  const column = await movedTo(task, changes)
+  if (!column) return
+  // The default columns need no rule lookup; only another column asks the board's rules.
+  if (!isDefaultMoveColumn(column.name) && !agentHearsMove(column, await enabledRuleTriggers(project.id))) return
+  const from = await nameOf(actorId)
+  const crew = project.teamId ? await githubDatabaseLookups.crewPeople(project.teamId) : []
+  const pm = crew.filter(person => person.key === 'pm').map(person => person.userId)
+  const customerVisible = task.visibility === 'customer'
+  for (const recipient of moveRecipients(task, actorId, pm)) {
+    moveCoalescer.offer(`${project.id}|${recipient}|${customerVisible ? 'customer' : 'internal'}`, { recipient, board: project, task, from, customerVisible })
+  }
+}
 /** The column a card was moved into, when this change says it was moved. */
-async function movedTo(task: Task, changes: string[]): Promise<string | null> {
+async function movedTo(task: Task, changes: string[]): Promise<{ id: string, name: string } | null> {
   if (!changes.some(change => change.startsWith('Moved to '))) return null
-  const [row] = await db.select({ name: projectColumns.name }).from(projectTasks)
+  const [row] = await db.select({ id: projectColumns.id, name: projectColumns.name }).from(projectTasks)
     .innerJoin(projectColumns, eq(projectColumns.id, projectTasks.columnId))
     .where(eq(projectTasks.id, task.id))
-  return row?.name ?? null
+  return row ?? null
 }
-// The agents hear of a card that reached a column they watch for: its owners hear of it.
-async function tellAgentsOfMove(project: Project, task: Task, actorId: string | null, changes: string[]) {
-  const destination = await movedTo(task, changes)
-  if (!destination || !AGENT_MOVE_COLUMNS.has(destination.toLowerCase())) return
-  const from = await nameOf(actorId)
-  for (const id of new Set([task.assigneeId, task.createdBy])) {
-    if (id && id !== actorId) {
-      await emitAgentEventAsync(id, { kind: 'task_moved', board: project, task, from, customerVisible: task.visibility === 'customer' })
-    }
-  }
+
+/** The triggers of the rules on a board that are switched on. A rule that chooses a column is one of them. */
+async function enabledRuleTriggers(projectId: string): Promise<unknown[]> {
+  const rows = await db.select({ trigger: projectRules.trigger }).from(projectRules)
+    .where(and(eq(projectRules.projectId, projectId), eq(projectRules.enabled, true)))
+  return rows.map(row => row.trigger)
 }
