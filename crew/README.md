@@ -111,11 +111,12 @@ and `origin` (empty except on `task_created`). The text is one line, for example
 - `reply` with `needs_feedback_from_me`: the text ends with ` [needs your feedback]`. It means you have asked a
   `QUESTION:` on that card at some point. It does not say whether this reply answers that question.
 - Several events on one card that arrive within two seconds of the first one are one line: `2 events for task "<card id>": ...`.
-- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`, and the four GitHub kinds below.
+- The kinds: `task_created`, `task_assigned`, `reply`, `task_moved`, `mention`, `unblocked`, and the four GitHub kinds below.
   - `task_created` reaches only members who are streaming now or were active in the last 24 hours. The channel passes
     it on to a worker only when the card is assigned to that worker.
   - `task_moved` reaches only the card's assignee and creator, and only when the card moves into Verify, Ready for
     live, Done or Bugs. Nobody else hears of the move.
+  - `unblocked` reaches the card's assignee and the crew's pm when the last open blocker of the card finishes (finished column, completed, or trashed). Nothing moves by itself.
   - `origin` is `person`, `agent` or `rule`, or `github` on the four GitHub kinds below. Nothing emits those until the
     GitHub webhook slice lands. A card made by the GitHub sync script (`issuesync.mjs`) goes through the agent API, so
     it arrives with `origin "agent"`.

@@ -122,6 +122,7 @@ on the customer's answers, and on what Boss and the PM ask of you.
 - `reply` without it: read the new comment. If it asks the crew something, answer on the card. Otherwise do nothing.
 - `task_moved` (a card you own or created moved into Verify, Ready for live, Done or Bugs): Verify, pre-check it as
   "The PM's job" section says. Bugs: rule 9 in "The rules of the road". Ready for live and Done: nothing, Boss publishes.
+- `unblocked` (the last open blocker of a card you are on finished, so the card may start): read it with `get_task`. Nothing moved by itself.
 - `task_assigned` (a card was assigned to you): plan it or take it, as for `task_created`.
 - `mention` (your name was written in a comment): `get_task`, and answer on the card.
 

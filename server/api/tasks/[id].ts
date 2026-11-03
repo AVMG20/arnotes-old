@@ -9,6 +9,7 @@ import { requireAssignable } from '../../utils/people'
 import { parseDueOn } from '../../utils/taskFields'
 import { listFields, setFieldValues } from '../../utils/customFields'
 import { notifyAssigned, notifyTaskChange } from '../../utils/notifyEvents'
+import { tellUnblockedOnTrash } from '../../utils/unblockedWatch'
 import { fireRules, newRuleChain } from '../../utils/ruleEngine'
 import type { TriggerKind } from '../../utils/ruleSpec'
 
@@ -55,6 +56,8 @@ export default defineEventHandler(async (event) => {
       await db.update(projectTasks).set(uiDeletion(event)).where(eq(projectTasks.id, id))
     }
 
+    // Trashing the last open blocker of a task counts as finishing it (GH #36 slice 5).
+    if (!permanent) await tellUnblockedOnTrash(project, task.id, event.context.session.user.id)
     await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, project.id))
 
     await publishFromEvent(event, { type: 'board', projectId: project.id })

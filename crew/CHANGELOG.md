@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-03: the unblocked event and Inbox note (GH #36 slice 5)
+
+- **`server/utils/unblockedWatch.ts`.** New. When the last open blocker of a task finishes (its column is finished, it is completed, or it is trashed), the assignee gets an Inbox note and the `unblocked` agent event, and the crew's pm gets the event. A dependent is told only when it was blocked before the change. Coalesced per board and recipient, like task moves.
+- **`server/utils/agentEvents.ts`: `unblocked`.** A new kind. Nothing else changes.
+- **`crew/channel.mjs`, `crew/CREW.md.tmpl`, `crew/PROMPTS.md.tmpl`, `crew/README.md`.** One line each for the kind.
+
 ## 2026-11-02: the PM side of failed GitHub deliveries (GH6c)
 
 - **`server/utils/agentEvents.ts`: `delivery_failed`.** The crew's pm hears one event for each delivery that gives up for good, when its row is new (a retried row that fails again is not announced again). The frame carries ids only: the event, the repository, the class, the attempts and a short code. Never the reason text or the payload. A team that is not a crew gets it for its owners. It is not a GitHub-card kind, and nothing else hears it.
