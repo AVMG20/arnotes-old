@@ -172,11 +172,63 @@ function decodeBody(bytes) {
 // An image is read before the browser starts, so a missing file is a plain error.
 if (command === 'attach' && !existsSync(rest[1] ?? '')) refuse(`no such image: ${rest[1] ?? '(none given)'}`, 66)
 
+// A call that is stopped by SIGHUP, SIGINT or SIGTERM, or that hits an uncaught error, closes its
+// browser before it exits, so no Chromium keeps the profile locked for the next call. SIGKILL cannot
+// be caught here; whether Chromium then exits on its own is checked and reported on the card.
+// Dialogs (confirm, alert, prompt) are dismissed by default, so a confirm() that guards a delete says no.
+// CREW_ACCEPT_DIALOGS=1 accepts them instead; the opt-in is for a run that must get past a confirm().
+const ACCEPT_DIALOGS = process.env.CREW_ACCEPT_DIALOGS === '1'
+const SIGNAL_EXIT = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 }
+// The longest a stop waits for the browser to close before the process exits anyway.
+const CLOSE_LIMIT_MS = 5000
+let ctx = null
+let launching = null
+let closing = null
+let exiting = false
+// Closes the browser once, however many paths ask for it.
+function closeBrowser() {
+  closing ??= ctx ? ctx.close().catch(() => {}) : Promise.resolve()
+  return closing
+}
+// A launch that ends after a stop began is closed as soon as it has a context.
+function closeLaunched(context) {
+  ctx = context
+  return closeBrowser()
+}
+// Ends the call: closes the browser (after a launch still in progress), then exits with code.
+async function leave(code) {
+  if (exiting) return
+  exiting = true
+  const closed = launching ? launching.then(closeLaunched, () => {}) : closeBrowser()
+  let timer
+  const limit = new Promise((resolve) => {
+    timer = setTimeout(resolve, CLOSE_LIMIT_MS)
+  })
+  await Promise.race([closed, limit])
+  clearTimeout(timer)
+  process.exit(code)
+}
+for (const [signal, code] of Object.entries(SIGNAL_EXIT)) {
+  process.on(signal, () => {
+    console.error(`stopping on ${signal}`)
+    // A second stop does not wait for a close that is hung.
+    if (exiting) process.exit(code)
+    leave(code)
+  })
+}
+process.on('uncaughtException', (error) => {
+  console.error('ERROR', error.message)
+  leave(1)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('ERROR', reason?.message ?? 'unhandled rejection')
+  leave(1)
+})
 // Everything below drives a browser that is yours alone.
 const profile = `${here}profiles/${who}`
 mkdirSync(profile, { recursive: true })
 const fonts = `${here}fonts.conf`
-const ctx = await chromium.launchPersistentContext(profile, {
+launching = chromium.launchPersistentContext(profile, {
   ...(config.chromium || process.env.CHROMIUM ? { executablePath: config.chromium || process.env.CHROMIUM } : {}),
   headless: true,
   // On a machine without system fonts Chromium exits on some pages; init.mjs writes fonts.conf when "fontDir" is set.
@@ -187,6 +239,15 @@ const ctx = await chromium.launchPersistentContext(profile, {
 const h = { origin: BASE }
 let code = 0
 try {
+  ctx = await launching
+  // A dialog is answered at once (see ACCEPT_DIALOGS) and only its type is noted, so it cannot hang a command.
+  const handleDialog = (dialog) => {
+    console.error(`dialog ${dialog.type()} ${ACCEPT_DIALOGS ? 'accepted' : 'dismissed'}`)
+    const answer = ACCEPT_DIALOGS ? dialog.accept() : dialog.dismiss()
+    answer.catch(() => {})
+  }
+  for (const page of ctx.pages()) page.on('dialog', handleDialog)
+  ctx.on('page', page => page.on('dialog', handleDialog))
   const session = await (await ctx.request.get(`${BASE}/api/auth/get-session`)).json().catch(() => null)
   if (!session?.user) {
     const res = await ctx.request.post(`${BASE}/api/auth/sign-in/email`, { data: { email: me.email, password: me.password }, headers: h })
@@ -241,9 +302,9 @@ try {
     code = 64
   }
 } catch (error) {
-  console.error('ERROR', error.message)
+  if (!exiting) console.error('ERROR', error.message)
   code = 1
 } finally {
-  await ctx.close()
+  await closeBrowser()
 }
-process.exit(code)
+if (!exiting) process.exit(code)
