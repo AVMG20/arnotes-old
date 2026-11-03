@@ -1,5 +1,6 @@
 {
   "team": "Acme Crew",
+  "crew": { "slug": "acme" },
   "product": {
     "name": "Acme App",
     "repo": "/absolute/path/to/the/product/repository",
