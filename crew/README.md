@@ -16,7 +16,7 @@ The commands in this section run from the kit folder (this one, where this READM
 response is the crew's `creds.json`; nothing else is set up by hand.
 
 1. Write `crew.json` in the crew's home folder (see `crew.config.example.json`): the product, the
-   board URL, the people's names and, optionally, the chat line.
+   board URL, the people's names, the crew slug (`"crew": { "slug": "..." }`, lowercase letters, digits and dashes, the one `setup.mjs` needs) and, optionally, the chat line.
 2. Put `creds.json` (the response, mode 600) in the same folder.
 3. Run `node init.mjs`. It checks the machine (Node, a browser) and renders the agents' documents
    (`CREW.md`, `PROMPTS.md`, ...) from the `*.tmpl` files.

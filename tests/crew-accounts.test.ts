@@ -42,6 +42,8 @@ after(async () => {
   // Sign-up rows by their spelling, so a row that was not refused is still removed.
   await db.delete(user).where(like(user.email, `c%-${tag}@%`))
   if (crewIds.length) await db.delete(crews).where(inArray(crews.id, crewIds))
+  // The postgres pool keeps the process alive; close it or the test file never ends.
+  await db.$client.end({ timeout: 1 })
 })
 
 // Forms a provider or a typist might send for the reserved space: case, a fullwidth
