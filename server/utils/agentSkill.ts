@@ -12,7 +12,7 @@ const GROUPS: { title: string, match: (tool: McpToolDefinition) => boolean, note
   {
     title: 'Task updates',
     match: tool => /^(edit|delete)_task_update$/.test(tool.name),
-    note: 'An update on a task can be changed or removed by its author only: you may change what you posted, or what your key\'s owner posted through an agent. A customer contact may change only the customer-visible updates they wrote. An edit keeps the update\'s visibility and reply, marks it edited with the time, and does not tell anyone again; the old text is not kept. A delete removes the update for good, with no trash, and a reply to it stays and shows that its target was deleted. Both are recorded in the key owner\'s Inbox without the text. Read the thread with get_task to find the update id.'
+    note: 'An update on a task can be changed or removed by its author: you may change what you posted, or what your key\'s owner posted through an agent. The board\'s owner, or a team owner or admin, may change or remove any update on that board. A customer contact may change only the customer-visible updates they wrote. An edit keeps the update\'s visibility and reply, marks it edited with the time, and does not tell anyone again; the old text is not kept. A delete removes the update for good, with no trash, and a reply to it stays and shows that its target was deleted. Both are recorded in the key owner\'s Inbox without the text. Read the thread with get_task to find the update id.'
   },
   { title: 'My tasks and my inbox', match: tool => /^(my_tasks|list_notifications|mark_notifications_read)$/.test(tool.name) },
   { title: 'Custom fields', match: tool => /_fields?$/.test(tool.name) },

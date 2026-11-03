@@ -2,8 +2,8 @@
 // in the app. The thread is also where an agent answers a question or reports
 // back, so it is signed with the key the agent came in on.
 import { db } from '../db'
-import { taskComments, VISIBILITIES } from '../db/schema'
-import type { Visibility } from '../db/schema'
+import { member, taskComments, VISIBILITIES } from '../db/schema'
+import type { Project, Visibility } from '../db/schema'
 import { resolveReplyTarget } from './taskComments'
 import { and, eq } from 'drizzle-orm'
 import { audienceOf } from './mcpAccess'
@@ -19,10 +19,13 @@ import { fireRules, newRuleChain } from './ruleEngine'
 // author's; an agent posts under its key owner's account, so an agent may change only what an agent
 // posted under that account. Anything the owner typed in the app stays theirs to change there.
 // A customer contact sees and changes only customer-visible updates, and only their own.
-export function requireAuthorOf(comment: { userId: string, visibility: Visibility, createdVia: string }, context: { userId: string }, audience: Audience) {
+// `manager` is set by the caller when the key's person owns the board or administers its team: they may change any
+// update on it, not only an agent's own. It never reaches a customer contact.
+export function requireAuthorOf(comment: { userId: string, visibility: Visibility, createdVia: string }, context: { userId: string }, audience: Audience, manager = false) {
   if (audience === 'customer' && comment.visibility !== 'customer') {
     throw new McpToolError('No update with that id on this task.')
   }
+  if (manager && audience === 'staff') return
   if (comment.userId !== context.userId) {
     throw new McpToolError('Only the author can change this update. It was written by someone else.')
   }
@@ -56,11 +59,30 @@ export function editFields(body: string, now: number) {
   return { body, editedAt: now }
 }
 
+/**
+ * Whether a person may change any update on a board: its owner, or a team owner or admin. `teamRole` is their
+ * role on the board's team, or null when they are not on it. A personal board has only its owner.
+ */
+export function managesAnyUpdate(board: Pick<Project, 'userId' | 'teamId'>, userId: string, teamRole: string | null): boolean {
+  if (!board.teamId) return board.userId === userId
+  if (teamRole === null) return false
+  return board.userId === userId || teamRole === 'owner' || teamRole === 'admin'
+}
+
+async function managesAnyUpdateOn(board: Pick<Project, 'userId' | 'teamId'>, context: { userId: string }): Promise<boolean> {
+  if (!board.teamId) return managesAnyUpdate(board, context.userId, null)
+  const [membership] = await db
+    .select({ role: member.role })
+    .from(member)
+    .where(and(eq(member.organizationId, board.teamId), eq(member.userId, context.userId)))
+  return managesAnyUpdate(board, context.userId, membership?.role ?? null)
+}
+
 export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
   {
     name: 'edit_task_update',
     title: 'Edit an update on a task',
-    description: 'Change the text of an update on a task that an agent posted for you, the key owner. Updates typed in the app stay in the app. A customer contact may change only their own customer-visible updates. The update is marked edited, with the time. Its old text is not kept, and its visibility and reply stay as they are. Nobody is told again. Read the thread with get_task to find the update id.',
+    description: 'Change the text of an update on a task that an agent posted for you, the key owner. Updates typed in the app stay in the app, unless you are the board\'s owner or a team owner or admin: then you may change any update on that board. A customer contact may change only their own customer-visible updates. The update is marked edited, with the time. Its old text is not kept, and its visibility and reply stay as they are. Nobody is told again. Read the thread with get_task to find the update id.',
     scope: 'boards:write',
     readOnly: false,
     inputSchema: {
@@ -80,7 +102,8 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
 
       const audience = audienceOf(context, board)
       const comment = await visibleUpdate(task.id, updateId, audience)
-      requireAuthorOf(comment, context, audience)
+      const byOwner = audience === 'staff' && comment.userId !== context.userId && await managesAnyUpdateOn(board, context)
+      requireAuthorOf(comment, context, audience, byOwner)
       if (comment.body === body) throw new McpToolError('The update already says that, so nothing changed.')
 
       const [updated] = await db
@@ -94,6 +117,7 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
       // No notification and no rule run: an edit is not a new update, and the people on the card heard the first one.
       return {
         edited: true,
+        byOwner,
         board: { id: board.id, name: board.name },
         task: { id: task.id, title: task.title },
         update: {
@@ -110,7 +134,7 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
   {
     name: 'delete_task_update',
     title: 'Delete an update on a task',
-    description: 'Delete an update on a task that an agent posted for you, the key owner. Updates typed in the app stay in the app. A customer contact may delete only their own customer-visible updates. The update is removed for good, not moved to a trash. Replies to it stay and show that the update they answered was deleted. Nobody is told. The key owner\'s Inbox records the deletion without the text.',
+    description: 'Delete an update on a task that an agent posted for you, the key owner. Updates typed in the app stay in the app, unless you are the board\'s owner or a team owner or admin: then you may delete any update on that board. A customer contact may delete only their own customer-visible updates. The update is removed for good, not moved to a trash. Replies to it stay and show that the update they answered was deleted. Nobody is told. The key owner\'s Inbox records the deletion without the text.',
     scope: 'boards:write',
     readOnly: false,
     destructive: true,
@@ -126,7 +150,8 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
       const { task, board } = await findTask(requireString(args, 'id'), context)
       const audience = audienceOf(context, board)
       const comment = await visibleUpdate(task.id, requireString(args, 'updateId'), audience)
-      requireAuthorOf(comment, context, audience)
+      const byOwner = audience === 'staff' && comment.userId !== context.userId && await managesAnyUpdateOn(board, context)
+      requireAuthorOf(comment, context, audience, byOwner)
 
       // Only this row goes. taskComments.replyToId has no foreign key, so a reply keeps its target id and reads as deleted.
       const removed = await db.delete(taskComments).where(eq(taskComments.id, comment.id)).returning({ id: taskComments.id })
@@ -135,6 +160,7 @@ export const MCP_UPDATE_TOOLS: McpToolDefinition[] = [
 
       return {
         deleted: true,
+        byOwner,
         board: { id: board.id, name: board.name },
         task: { id: task.id, title: task.title },
         update: { id: comment.id, visibility: comment.visibility, length: comment.body.length }
