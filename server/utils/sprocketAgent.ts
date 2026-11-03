@@ -31,6 +31,8 @@ export function isSprocketModel(value: unknown): value is string {
 }
 
 const MCP_SERVER = 'taskmanager'
+// The same name the copied agent setup uses, so a run and a hand-connected agent read alike.
+const KEY_VARIABLE = 'TASKMANAGER_API_KEY'
 const RUN_TIMEOUT_MS = 10 * 60_000
 const HEARTBEAT_MS = 10_000
 // Only these reach Claude Code: the server's own secrets (database URL, auth and vault keys) stay out.
@@ -173,11 +175,12 @@ export async function agentChatResponse(opts: {
 
   const run = issueRunToken(key.id)
   // A private folder per run: the working directory (no project instructions to find) and
-  // the MCP config, which carries the run token and so is never put on the command line.
+  // the MCP config. The run token travels in the child's environment only; Claude Code fills
+  // `${TASKMANAGER_API_KEY}` in when it reads the config, so the token never touches disk.
   const dir = await mkdtemp(join(tmpdir(), 'sprocket-'))
   const mcpConfig = join(dir, 'mcp.json')
   await writeFile(mcpConfig, JSON.stringify({
-    mcpServers: { [MCP_SERVER]: { type: 'http', url: mcpUrl(), headers: { Authorization: `Bearer ${run.token}` } } }
+    mcpServers: { [MCP_SERVER]: { type: 'http', url: mcpUrl(), headers: { Authorization: `Bearer \${${KEY_VARIABLE}}` } } }
   }), { mode: 0o600 })
 
   const args = [
@@ -196,7 +199,7 @@ export async function agentChatResponse(opts: {
     '--verbose',
     '--system-prompt', systemPrompt(opts.today)
   ]
-  const child = spawn(bin, args, { cwd: dir, env: childEnv(bin), stdio: ['pipe', 'pipe', 'pipe'] })
+  const child = spawn(bin, args, { cwd: dir, env: { ...childEnv(bin), [KEY_VARIABLE]: run.token }, stdio: ['pipe', 'pipe', 'pipe'] })
   child.stdin.end(prompt)
 
   const encoder = new TextEncoder()

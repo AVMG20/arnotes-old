@@ -59,43 +59,10 @@ const effortValue = computed(() => settings.value?.effort ?? DEFAULT_EFFORT)
 
 const origin = computed(() => (import.meta.client ? window.location.origin : ''))
 
-const mcpCommand = computed(() =>
-  `claude mcp add --transport http taskmanager ${origin.value}/api/mcp \\\n  --header "Authorization: Bearer arn_your_key_here"`
-)
-
-const kitCommands = computed(() => [
-  'mkdir -p ~/crew-kit ~/.claude/skills/taskmanager-crew',
-  `curl -fsSL ${origin.value}/crew/kit.tar.gz | tar -xz -C ~/crew-kit`,
-  `curl -fsSL ${origin.value}/crew/SKILL.md -o ~/.claude/skills/taskmanager-crew/SKILL.md`,
-  'cd ~/crew-kit && npm install'
-].join('\n'))
-
-// Written by the shell, so $HOME is the agent machine's own.
-const channelCommand = computed(() => `cat > .mcp.json <<EOF
-{
-  "mcpServers": {
-    "taskmanager-crew": {
-      "command": "node",
-      "args": ["$HOME/crew-kit/channel.mjs", "pm"],
-      "env": { "CREW_HOME": "$HOME/crew-home" }
-    }
-  }
-}
-EOF
-claude --dangerously-load-development-channels server:taskmanager-crew`)
-
-const instructions = computed(() => `Set yourself up to work with my Taskmanager at ${origin.value}.
-
-1. Connect its MCP server. I will give you an API key (it starts with arn_); run:
-   claude mcp add --transport http taskmanager ${origin.value}/api/mcp --header "Authorization: Bearer <the key>"
-2. Install the crew kit and its skill:
-${kitCommands.value.split('\n').map(line => `   ${line}`).join('\n')}
-3. Read ~/crew-kit/README.md and take me through "A provisioned crew" if I want to run a crew.
-   The crew's home folder is ~/crew-home (CREW_HOME); creds.json goes there, never into a repository.
-4. For crew channels, put a .mcp.json in the folder a crew member's session starts from, as the
-   README's "Channels" section shows, with the full paths of ~/crew-kit/channel.mjs and ~/crew-home.
-
-Ask me for anything you need, and never print the key or creds.json.`)
+const mcpCommand = computed(() => mcpAddCommand(origin.value))
+const kitCommands = computed(() => crewKitCommands(origin.value))
+const channelCommand = crewChannelCommand()
+const instructions = computed(() => agentInstructions(origin.value))
 
 const copiedKey = ref<string | null>(null)
 
@@ -353,8 +320,10 @@ async function copySkill() {
                 />
               </div>
               <p class="text-xs text-muted">
-                Paste this into a Claude Code session on the agent's machine: it connects the MCP server and
-                installs the crew kit and its skill. Hand it the API key when it asks.
+                For an agent of your own, not Sprocket: each Sprocket run gets a short-lived key of its own.
+                Start Claude Code on the agent's machine from a terminal where you ran
+                <code class="font-mono">export TASKMANAGER_API_KEY=arn_…</code>, then paste this. It connects
+                the MCP server and installs the crew kit and its skill, using the key only as that variable.
               </p>
               <pre class="text-xs font-mono bg-elevated/50 border border-default rounded-md p-3 overflow-x-auto max-h-64">{{ instructions }}</pre>
             </div>
@@ -376,7 +345,8 @@ async function copySkill() {
               </div>
               <pre class="text-xs font-mono bg-elevated/50 border border-default rounded-md p-3 overflow-x-auto">{{ mcpCommand }}</pre>
               <p class="text-xs text-muted">
-                A new key under Settings → API keys shows this command with the key filled in. More clients on
+                Run it where <code class="font-mono">$TASKMANAGER_API_KEY</code> is set. A new key under
+                Settings → API keys shows it with the export line filled in. More clients on
                 <NuxtLink
                   to="/mcp"
                   class="text-primary underline"

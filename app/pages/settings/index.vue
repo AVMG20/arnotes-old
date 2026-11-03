@@ -401,6 +401,11 @@ function swatchStyle(color: string, selected: boolean) {
                 rel="noopener"
                 class="text-primary underline"
               >What is OpenRouter?</a>
+              Sprocket can answer through Claude Code instead, as one of your agents:
+              <NuxtLink
+                to="/settings/sprocket"
+                class="text-primary underline"
+              >Sprocket settings</NuxtLink>.
             </p>
 
             <div class="divide-y divide-default">

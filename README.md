@@ -444,11 +444,14 @@ Anything addressable in the app is also addressable by its link. Paste the URL o
 The endpoint is `https://taskmanager.example.com/api/mcp`, spoken over streamable HTTP and authenticated with an `Authorization: Bearer` header.
 
 ```bash
+export TASKMANAGER_API_KEY=arn_your_key_here
 claude mcp add --transport http taskmanager https://taskmanager.example.com/api/mcp \
-  --header "Authorization: Bearer arn_your_key_here"
+  --header "Authorization: Bearer $TASKMANAGER_API_KEY"
 ```
 
-For clients configured with JSON:
+With the key in the environment, an agent following the setup instructions from Settings → Sprocket uses it as `$TASKMANAGER_API_KEY` and never types or prints it. Sprocket's own runs work the same way: the server passes each `claude -p` run its short-lived key in that variable.
+
+For clients configured with JSON (Claude Code's `.mcp.json` also accepts `"Bearer ${TASKMANAGER_API_KEY}"` here, filled in from the environment):
 
 ```json
 {
