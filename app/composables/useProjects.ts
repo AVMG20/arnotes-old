@@ -79,6 +79,9 @@ export interface ProjectTask {
   updatedAt: number
   deletedAt?: number | null
   deletedVia?: DeletionSource | null
+  // The blocked mark the board sends with each card (GH #36): derived, never stored.
+  blocked?: boolean
+  blockedBy?: string[]
 }
 
 /** Someone a task on the open board can be assigned to. */
@@ -286,7 +289,7 @@ function cacheBoard(projectId: string) {
 // A re-read hands back every task as a new object, and a new object is a new
 // prop on every card, so each one would render again to show what it already
 // shows. Rows that have not changed keep the object the board already had.
-function reconcileTasks(previous: ProjectTask[] | undefined, next: ProjectTask[]): ProjectTask[] {
+export function reconcileTasks(previous: ProjectTask[] | undefined, next: ProjectTask[]): ProjectTask[] {
   if (!previous?.length) return next
   const known = new Map(previous.map(task => [task.id, task]))
   return next.map((task) => {
@@ -296,6 +299,8 @@ function reconcileTasks(previous: ProjectTask[] | undefined, next: ProjectTask[]
       && old.columnId === task.columnId
       && old.position === task.position
       && old.deletedAt === task.deletedAt
+      && old.blocked === task.blocked
+      && (old.blockedBy ?? []).join(',') === (task.blockedBy ?? []).join(',')
       ? old
       : task
   })
