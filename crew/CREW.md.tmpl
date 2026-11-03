@@ -214,6 +214,23 @@ The PM, on top of that: steers the workers in `{{chat.workChannel}}`, pre-checks
 informed in `{{chat.channel}}`. The workers answer to the PM, the PM answers to the customer and to Boss
 (the code reviewer, who moves tasks to Ready for live and Done).
 
+## Quick checks: the shared browser (`crew <you> browser`)
+
+To look at a page and check what it does, use the shared browser. One Chromium serves the whole crew and each person has their own context and login, so there is nothing to start or stop:
+
+```
+node {{kit_dir}}/crew.mjs <you> browser goto {{board.url}}/projects/<id> [--tab T] [--width 390]   # opens a page, prints "URL - title"
+node {{kit_dir}}/crew.mjs <you> browser shot {{crew_dir}}/work/<you>/out.png [--full] [--tab T]      # PNG; only under your work folder
+node {{kit_dir}}/crew.mjs <you> browser eval 'document.querySelectorAll("li").length'               # runs a JS expression on the page, prints the value
+node {{kit_dir}}/crew.mjs <you> browser console                                                      # console messages and errors since the last call
+node {{kit_dir}}/crew.mjs <you> browser tabs | close-tab T | done                                    # done closes your tabs and forgets your login
+node {{kit_dir}}/crew.mjs browser status                                                             # who is using it, their tabs, idle seconds (never cookies)
+```
+
+Tabs default to `main`, at most 8 a person. A width stays on its tab until you give another. The first command starts the browser and signs you in with your own login. If the browser stops, the next command starts it again, signs you in again, and says so in its note. A person idle for 30 minutes loses the session. Finish with `done`. Dialogs (confirm, alert) are dismissed unless you pass `--accept-dialogs`; the console says which.
+
+Use `browser` to look and check. Use `run` (Playwright, below) for a script that clicks through a flow: `run` keeps its own browser and does not share this one. A browser command's `shot` writes only under your work folder.
+
 ## Two things about the dev environment
 
 - **The page reloads while people save files.** A dev server hot-reloads whenever anyone in

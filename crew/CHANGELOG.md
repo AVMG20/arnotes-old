@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **`crew <who> browser goto|shot|eval|console|tabs|close-tab|done` and `crew browser status|shutdown`** (GH #71). One headless Chromium for the crew, started by the first command and stopped when unused. One browser context per person, each signed in with that person's own login from `creds.json` (nothing about the login is stored on disk). Named tabs (at most 8 a person), a width kept per tab, idle cleanup, dialogs dismissed unless asked, no TCP port. A browser crash is announced in the next reply, and the person is signed in again. `browser-driver.mjs` is the driver and `browser.mjs` the command.
+- **Driver hardening.** A lock takeover no longer puts a lock back by a hard link: a live lock that a takeover caught is taken again by its owner, and a claim checks the socket after it creates a lock. The state folder is opened without following links and its descriptor is kept. The system temp folder is a screenshot root only when `CREW_BROWSER_SHOT_DIRS` names it.
+- **Docs and tests.** `CREW.md.tmpl` and `PROMPTS.md.tmpl` say when to use `browser` and when `run`. `README.md` has the settings and the limits. `kit-files.txt` lists the new files. `crew/kit.test.mjs` checks that list and runs the command end to end against a fake board and a real Chromium (skipped without one).
+
 ## 2026-11-03: the unblocked event and Inbox note (GH #36 slice 5)
 
 - **`server/utils/unblockedWatch.ts`.** New. When the last open blocker of a task finishes (its column is finished, it is completed, or it is trashed), the assignee gets an Inbox note and the `unblocked` agent event, and the crew's pm gets the event. A dependent is told only when it was blocked before the change. Coalesced per board and recipient, like task moves.

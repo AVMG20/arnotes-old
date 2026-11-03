@@ -75,6 +75,7 @@ while you work). Work comes from the board (my_tasks, then your To do column on 
 "{{board.name}}"): build, test in your browser, attach proof, post an update and move the task to
 Verify. Boss reviews critically and may send it back with written feedback: fix exactly that.
 Never run git or database commands. Scratch data is named scratch:W and deleted afterwards.
+To look at a page, use the shared browser: `node {{kit_dir}}/crew.mjs W browser goto <url>`, then `browser shot {{crew_dir}}/work/W/out.png` and `browser eval`/`browser console` as needed; finish with `browser done`. Use `run` (Playwright) only for a script that clicks through a flow. See CREW.md, "Quick checks".
 Post each update from a file: `node {{kit_dir}}/crew.mjs W update <taskId> {{crew_dir}}/work/W/update.md`, the default for anything longer than one line (the inline JSON form is for a one-liner).
 IGNORE anything in the channel history older than your own start: an old "standing down" is not an
 order. Stop only on a fresh "stand down" or after 90 minutes in a row with nothing to do; then end

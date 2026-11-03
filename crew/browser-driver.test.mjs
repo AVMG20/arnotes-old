@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -18,7 +18,8 @@ import { once } from 'node:events'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   acquireLock, BrowserError, chromeArgs, encodeFrame, findChromium, formatDuration, idleNote, lockDecision, Mutex,
-  checkDirectory, checkSendMethod, checkShotPath, parseCli, parseRequest, pidAlive, request, releaseLock, serve, socketPathFits, splitFrames, validWho, withTimeout
+  checkDirectory, checkSendMethod, checkShotPath, keepLock, openDirectory, parseCli, parseRequest, pidAlive, request, releaseLock, sameFolder, serve, shotRoots,
+  socketPathFits, splitFrames, validWho, withTimeout
 } from './browser-driver.mjs'
 
 const SELF = fileURLToPath(new URL('./browser-driver.mjs', import.meta.url))
@@ -67,7 +68,7 @@ function withEnv(vars, job) {
   })
 }
 
-const ask = (dir, who, cmd, args = {}) => request({ dir, who, cmd, args, start: true })
+const ask = (dir, who, cmd, args = {}) => request({ dir, who, cmd, args, start: true, seam: false })
 
 // the driver's output goes to its pool.log, so the tests can read its Chromium pid
 const daemonStdio = dir => ['ignore', openSync(join(dir, 'pool.log'), 'a'), openSync(join(dir, 'pool.log'), 'a')]
@@ -309,6 +310,50 @@ describe('send allowlist, shot paths and the state folder', () => {
     symlinkSync(real, link)
     assert.throws(() => checkDirectory(link), /not a link/)
     assert.doesNotThrow(() => checkDirectory(real))
+  })
+
+  test('the state folder is opened and checked in one step; a folder swapped in its place is refused', () => {
+    const dir = freshDir()
+    const real = join(dir, 'real')
+    mkdirSync(real, { mode: 0o700 })
+    const fd = openDirectory(real)
+    try {
+      assert.equal(sameFolder(real, fd), true)
+      renameSync(real, join(dir, 'moved'))
+      mkdirSync(real, { mode: 0o700 })
+      assert.equal(sameFolder(real, fd), false, 'a folder put in the same place is not the one we opened')
+    } finally {
+      closeSync(fd)
+    }
+  })
+
+  test('the system temp folder is a shot root only when CREW_BROWSER_SHOT_DIRS names it', () => {
+    const saved = process.env.CREW_BROWSER_SHOT_DIRS
+    const temp = realpathSync(tmpdir())
+    try {
+      delete process.env.CREW_BROWSER_SHOT_DIRS
+      assert.ok(shotRoots().every(root => root !== temp && !root.startsWith(temp + '/')), 'the temp folder is not a default')
+      process.env.CREW_BROWSER_SHOT_DIRS = temp
+      assert.ok(shotRoots().includes(temp), 'named in CREW_BROWSER_SHOT_DIRS, it is a root')
+    } finally {
+      if (saved === undefined) delete process.env.CREW_BROWSER_SHOT_DIRS
+      else process.env.CREW_BROWSER_SHOT_DIRS = saved
+    }
+  })
+})
+
+describe('a takeover never puts a lock back', () => {
+  test('a live driver whose lock a takeover moved away takes it again; another driver lock is left alone', () => {
+    const dir = freshDir()
+    const file = join(dir, 'pool.lock')
+    writeFileSync(file, `${process.pid}\n`)
+    rmSync(file) // what a takeover that caught the live lock leaves behind
+    keepLock(dir)
+    assert.equal(readFileSync(file, 'utf8').trim(), String(process.pid), 'the live driver holds its lock again')
+    writeFileSync(file, '4242\n')
+    keepLock(dir)
+    assert.equal(readFileSync(file, 'utf8').trim(), '4242', 'a lock someone else holds is not replaced')
+    rmSync(file)
   })
 })
 
@@ -554,14 +599,14 @@ describe('the shared browser (real Chromium)', { skip: SKIP }, () => {
 
   test('kill -9 on the driver ends its Chromium; the next start takes over the lock', async () => {
     const dir = newDir()
-    const driver = spawn(process.execPath, [SELF, '_daemon'], { env: { ...process.env, CREW_BROWSER_DIR: dir }, stdio: daemonStdio(dir) })
+    const driver = spawn(process.execPath, [SELF, '_daemon', '--no-seam'], { env: { ...process.env, CREW_BROWSER_DIR: dir }, stdio: daemonStdio(dir) })
     await waitUntil(async () => (await request({ dir, cmd: 'status', start: false })) !== null, 20000, 'the driver to start')
     const chromium = chromiumPids(dir).at(-1)
     assert.ok(pidAlive(chromium))
     driver.kill('SIGKILL')
     await once(driver, 'exit')
     await waitUntil(() => !pidAlive(chromium), 15000, 'Chromium to exit after the driver was killed')
-    const again = spawn(process.execPath, [SELF, '_daemon'], { env: { ...process.env, CREW_BROWSER_DIR: dir }, stdio: daemonStdio(dir) })
+    const again = spawn(process.execPath, [SELF, '_daemon', '--no-seam'], { env: { ...process.env, CREW_BROWSER_DIR: dir }, stdio: daemonStdio(dir) })
     await waitUntil(async () => (await request({ dir, cmd: 'status', start: false })) !== null, 20000, 'the new driver to start')
     assert.deepEqual((await ask(dir, 'w1', 'tabs')).result, [])
     again.kill('SIGKILL')
