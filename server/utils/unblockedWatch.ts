@@ -2,14 +2,16 @@
 // assignee gets an Inbox note and an agent event, and the crew's pm gets the agent event. Nothing moves
 // by itself. Blocked-ness is derived (taskDependencyService), so a dependent is told only when it was
 // blocked before this change and is not blocked now: the blocker is the one that just finished.
-// Called once per real change: from notifyTaskChange (moves, completion) and from the two trash paths.
+// Called once per real change: from notifyTaskChange (moves, completion) and from the two trash paths and the bulk column paths (tellUnblockedAfterBulk).
 // Pure parts first (tested on their own); the database part reads the board and sends.
-import { and, desc, eq, isNull } from 'drizzle-orm'
+// The Inbox notes wait for a short window to close so a burst becomes one note: the windows live in this process,
+// so a note whose window is still open when the server stops is not sent (the agent events are in memory too and are not replayed).
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
 import { db } from '../db'
 import { projectColumns, projectTasks, taskActivity, taskDependencies, user } from '../db/schema'
 import { terminalColumnIds } from '../../shared/utils/board'
 import { notify } from './notifications'
-import { createMoveCoalescer } from './moveWatch'
+import { createMoveCoalescer, MOVE_WINDOW_MS } from './moveWatch'
 import { blockedStatesOn, isFinishedTask } from './taskDependencyService'
 import { emitAgentEventAsync, emitInBackground, githubDatabaseLookups } from './agentEvents'
 
@@ -47,6 +49,56 @@ export function unblockedIds(taskIds: readonly string[], blockedNow: ReadonlyMap
   })
 }
 
+/**
+ * Holds the notes of one window per key: the first is kept and the rest are counted, and the window's note is sent
+ * when the window closes. Window state is held only while a window is open, as in createMoveCoalescer.
+ */
+export function createNoteCoalescer<T>(options: {
+  /** Called with the first payload of the window and how many more it stands for. */
+  send: (first: T, more: number) => void
+  windowMs?: number
+  /** Runs `fn` after `ms`. Defaults to an unref'd timer, so an open window never keeps the process alive. */
+  schedule?: (fn: () => void, ms: number) => void
+}) {
+  const windowMs = options.windowMs ?? MOVE_WINDOW_MS
+  const schedule = options.schedule ?? ((fn: () => void, ms: number) => {
+    const timer = setTimeout(fn, ms)
+    timer.unref?.()
+  })
+  const open = new Map<string, { first: T, more: number }>()
+
+  return {
+    /** Offers a note. Only the window's own timer closes it, so a later window for the same key starts after it. */
+    offer(key: string, payload: T): void {
+      const entry = open.get(key)
+      if (entry) {
+        entry.more++
+        return
+      }
+      open.set(key, { first: payload, more: 0 })
+      schedule(() => {
+        const closing = open.get(key)
+        if (!closing) return
+        open.delete(key)
+        options.send(closing.first, closing.more)
+      }, windowMs)
+    },
+    /** How many windows are open now. */
+    openWindows(): number {
+      return open.size
+    }
+  }
+}
+
+/** The tasks a bulk change left finished that were unfinished before it: the blockers it freed. */
+export function freedByBulk(unfinishedBefore: readonly string[], rowsNow: readonly TaskState[], finished: ReadonlySet<string>): string[] {
+  const now = new Map(rowsNow.map(row => [row.id, row]))
+  return unfinishedBefore.filter((id) => {
+    const row = now.get(id)
+    return !!row && isFinishedTask(row, finished)
+  })
+}
+
 /** Who hears of an unblocked task: its assignee and the crew's pm, once each, never the person who made the change. */
 export function unblockedRecipients(assigneeId: string | null | undefined, actorId: string | null, pmIds: string[]): string[] {
   const all = [assigneeId, ...pmIds].filter((id): id is string => !!id && id !== actorId)
@@ -55,6 +107,11 @@ export function unblockedRecipients(assigneeId: string | null | undefined, actor
 
 type BoardRef = { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
 type TaskRef = { id: string, title: string, visibility: 'internal' | 'customer', assigneeId?: string | null, createdBy?: string | null }
+
+// A task as a bulk change finds it: where it is and whether it is done.
+type TaskState = Parameters<typeof isFinishedTask>[0] & { id: string }
+// A finished blocker as it is read: its title and visibility are what the Inbox note may name.
+type Blocker = { id: string, title: string, visibility: 'internal' | 'customer' }
 
 // Several unblocks in one window for the same person are sent as one, counted, like task moves (moveWatch.ts).
 type UnblockPayload = { recipient: string, board: BoardRef, task: TaskRef, from: string, customerVisible: boolean }
@@ -68,6 +125,17 @@ const unblockCoalescer = createMoveCoalescer<UnblockPayload>({
       from: more > 0 ? `${more} more unblocked tasks on ${payload.board.name}` : payload.from,
       customerVisible: payload.customerVisible
     }))
+  }
+})
+
+// The Inbox notes of the unblocks for one assignee in one window are one note: it waits for the window to close, names
+// its first task and counts the rest. The agent events above send their first at once; the note carries the count.
+type NotePayload = { board: BoardRef, task: TaskRef, recipient: string, actorId: string | null, body: string }
+const noteCoalescer = createNoteCoalescer<NotePayload>({
+  send: (first, more) => {
+    const title = more > 0 ? `"${first.task.title}" and ${more} more tasks are unblocked` : `"${first.task.title}" is unblocked`
+    void notify({ project: first.board, task: first.task, actorId: first.actorId, type: 'update', recipients: [first.recipient], title, body: first.body })
+      .catch(error => console.error('[unblocked] could not send the Inbox note', error))
   }
 })
 
@@ -129,7 +197,7 @@ export async function tellUnblockedOnChange(board: BoardRef, taskId: string, act
       columnNowFinished: finished.has(row.columnId),
       movedFromFinished: moved ? movedFromFinished : null
     })
-    if (unfinishedBefore) await unblockedBy(board, row, actorId)
+    if (unfinishedBefore) await unblockedBy(board, [row], actorId)
   })
 }
 
@@ -149,37 +217,81 @@ export async function tellUnblockedOnTrash(board: BoardRef, taskId: string, acto
       columnNowFinished: finished.has(row.columnId),
       movedFromFinished: null
     })
-    if (unfinishedBefore) await unblockedBy(board, row, actorId)
+    if (unfinishedBefore) await unblockedBy(board, [row], actorId)
   })
 }
 
-// The live dependents of a blocker that just finished, and the ones it no longer holds back.
-async function unblockedBy(board: BoardRef, blocker: { id: string, title: string, visibility: 'internal' | 'customer' }, actorId: string | null): Promise<void> {
-  const dependents: TaskRef[] = await db
-    .select({ id: projectTasks.id, title: projectTasks.title, visibility: projectTasks.visibility, assigneeId: projectTasks.assigneeId, createdBy: projectTasks.createdBy })
+// The live dependents the finished blockers just held back, and the ones no longer held back by anything. A dependent
+// is told once per call, however many of the blockers it waited for finished in this change.
+async function unblockedBy(board: BoardRef, blockers: Blocker[], actorId: string | null): Promise<void> {
+  if (!blockers.length) return
+  const links = await db
+    .select({ blockerId: taskDependencies.blockerTaskId, id: projectTasks.id, title: projectTasks.title, visibility: projectTasks.visibility, assigneeId: projectTasks.assigneeId, createdBy: projectTasks.createdBy })
     .from(taskDependencies)
     .innerJoin(projectTasks, eq(projectTasks.id, taskDependencies.blockedTaskId))
-    .where(and(eq(taskDependencies.blockerTaskId, blocker.id), eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt)))
-  if (!dependents.length) return
+    .where(and(inArray(taskDependencies.blockerTaskId, blockers.map(blocker => blocker.id)), eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt)))
+  const byId = new Map(blockers.map(blocker => [blocker.id, blocker]))
+  const waiting = new Map<string, { task: TaskRef, freedBy: Blocker[] }>()
+  for (const link of links) {
+    const blocker = byId.get(link.blockerId)
+    if (!blocker) continue
+    const entry = waiting.get(link.id) ?? { task: { id: link.id, title: link.title, visibility: link.visibility, assigneeId: link.assigneeId, createdBy: link.createdBy }, freedBy: [] }
+    entry.freedBy.push(blocker)
+    waiting.set(link.id, entry)
+  }
+  if (!waiting.size) return
 
-  const states = await blockedStatesOn(board.id, dependents.map(task => task.id))
-  const freed = new Set(unblockedIds(dependents.map(task => task.id), states))
-  // One dependent once per call, however many of its blockers this call names.
-  const tasks = [...new Map(dependents.filter(task => freed.has(task.id)).map(task => [task.id, task])).values()]
-  if (!tasks.length) return
+  const ids = [...waiting.keys()]
+  const freed = unblockedIds(ids, await blockedStatesOn(board.id, ids))
+  if (!freed.length) return
 
   const from = await nameOf(actorId)
   const crew = board.teamId ? await githubDatabaseLookups.crewPeople(board.teamId) : []
   const pm = crew.filter(person => person.key === 'pm').map(person => person.userId)
-  // The Inbox note names the blocker only when a customer may read it; otherwise it stays vague.
-  const body = blocker.visibility === 'customer' ? `"${blocker.title}" is finished.` : 'A task it waited for is finished.'
-  for (const task of tasks) {
-    if (task.assigneeId) {
-      await notify({ project: board, task, actorId, type: 'update', recipients: [task.assigneeId], title: `"${task.title}" is unblocked`, body })
-    }
+  for (const id of freed) {
+    const { task, freedBy } = waiting.get(id)!
+    // The Inbox note names the blocker only when one customer-visible blocker is all the task waited for.
+    const named = freedBy.length === 1 && freedBy[0]!.visibility === 'customer'
+    const body = named ? `"${freedBy[0]!.title}" is finished.` : 'A task it waited for is finished.'
+    if (task.assigneeId) noteCoalescer.offer(`${board.id}|${task.assigneeId}`, { board, task, recipient: task.assigneeId, actorId, body })
     const customerVisible = task.visibility === 'customer'
     for (const recipient of unblockedRecipients(task.assigneeId, actorId, pm)) {
       unblockCoalescer.offer(`${board.id}|${recipient}|${customerVisible ? 'customer' : 'internal'}`, { recipient, board, task, from, customerVisible })
     }
   }
+}
+
+/**
+ * The unfinished live tasks of a column, read before a bulk change (a column delete) moves or trashes them. A read
+ * that fails tells nothing, so it gives no tasks.
+ */
+export async function unfinishedTasksOn(board: BoardRef, columnId: string): Promise<string[]> {
+  try {
+    const rows = await db
+      .select({ id: projectTasks.id, columnId: projectTasks.columnId, completedAt: projectTasks.completedAt, deletedAt: projectTasks.deletedAt })
+      .from(projectTasks)
+      .where(and(eq(projectTasks.columnId, columnId), eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt)))
+    const { finished } = await finishedColumnsOf(board.id)
+    return rows.filter(row => !isFinishedTask(row, finished)).map(row => row.id)
+  } catch (error) {
+    console.error('[unblocked] could not read a column before it was changed', error)
+    return []
+  }
+}
+
+/**
+ * A bulk change (a column delete, over MCP or the route) moved or trashed the tasks of a column. `unfinishedBefore` is
+ * what unfinishedTasksOn read before it; the tasks the change left finished are told, once each, as for a single change.
+ */
+export async function tellUnblockedAfterBulk(board: BoardRef, unfinishedBefore: readonly string[], actorId: string | null): Promise<void> {
+  if (!unfinishedBefore.length) return
+  await guarded(async () => {
+    const rows = await db
+      .select({ id: projectTasks.id, title: projectTasks.title, visibility: projectTasks.visibility, columnId: projectTasks.columnId, completedAt: projectTasks.completedAt, deletedAt: projectTasks.deletedAt })
+      .from(projectTasks)
+      .where(inArray(projectTasks.id, [...unfinishedBefore]))
+    const { finished } = await finishedColumnsOf(board.id)
+    const freed = new Set(freedByBulk(unfinishedBefore, rows, finished))
+    await unblockedBy(board, rows.filter(row => freed.has(row.id)), actorId)
+  })
 }

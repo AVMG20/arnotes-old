@@ -4,6 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { requireColumn, requireStaff, projectColumnsOrdered, positionBetween, renumberColumnTasks, uiDeletion } from '../../utils/projects'
 import { isAccentColor } from '#shared/utils/colors'
 import { publishFromEvent } from '../../utils/realtime'
+import { tellUnblockedAfterBulk, unfinishedTasksOn } from '../../utils/unblockedWatch'
 
 export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
@@ -74,6 +75,8 @@ export default defineEventHandler(async (event) => {
     return { ok: true, permanent: true, movedToColumnId: null }
   }
 
+  // The tasks unfinished before the change are read first, so it can tell which blockers it finished.
+  const unfinished = await unfinishedTasksOn(project, id)
   const stamp = uiDeletion(event)
 
   // Tasks move to the left neighbour; the first column's tasks go to the next
@@ -102,6 +105,7 @@ export default defineEventHandler(async (event) => {
 
   await db.update(projectColumns).set(stamp).where(eq(projectColumns.id, id))
   await db.update(projects).set({ updatedAt: Date.now() }).where(eq(projects.id, project.id))
+  await tellUnblockedAfterBulk(project, unfinished, event.context.session.user.id)
 
   await publishFromEvent(event, { type: 'board', projectId: project.id })
   return { ok: true, permanent: false, movedToColumnId: target?.id ?? null }
