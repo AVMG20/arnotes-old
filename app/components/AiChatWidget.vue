@@ -5,7 +5,7 @@ import type { ChatMessage } from '~/composables/useAiChat'
 // ─── Panel state ─────────────────────────────────────────────
 
 const open = ref(false)
-const expanded = useCookie<boolean>('arnai-expanded', { default: () => false, maxAge: 60 * 60 * 24 * 365 })
+const expanded = useCookie<boolean>('sprocket-expanded', { default: () => false, maxAge: 60 * 60 * 24 * 365 })
 
 const { messages, thinking, busy, send, retry, stop, clearChat } = useAiChat()
 const { openrouterModel, openrouterApiKey, openrouterApiKeyMasked } = useUserSettings()

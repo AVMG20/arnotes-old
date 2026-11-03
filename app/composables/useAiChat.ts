@@ -31,7 +31,7 @@ export interface ChatMessage {
   retrying?: boolean
 }
 
-const SESSION_KEY = 'arnai-chat-v1'
+const SESSION_KEY = 'sprocket-chat-v1'
 const MAX_TOOL_ROUNDS = 6
 /** Attempts per round when the connection drops before the model finished. */
 const MAX_STREAM_ATTEMPTS = 3
