@@ -3,6 +3,7 @@
 // by itself. Blocked-ness is derived (taskDependencyService), so a dependent is told only when it was
 // blocked before this change and is not blocked now: the blocker is the one that just finished.
 // Called once per real change: from notifyTaskChange (moves, completion) and from the two trash paths and the bulk column paths (tellUnblockedAfterBulk).
+// A column delete that moves its tasks into a neighbour finishes them when that neighbour is a finishing column, so their dependents are told.
 // Pure parts first (tested on their own); the database part reads the board and sends.
 // The Inbox notes wait for a short window to close so a burst becomes one note: the windows live in this process,
 // so a note whose window is still open when the server stops is not sent (the agent events are in memory too and are not replayed).
@@ -11,9 +12,9 @@ import { db } from '../db'
 import { projectColumns, projectTasks, taskActivity, taskDependencies, user } from '../db/schema'
 import { terminalColumnIds } from '../../shared/utils/board'
 import { notify } from './notifications'
-import { createMoveCoalescer, MOVE_WINDOW_MS } from './moveWatch'
+import { createMoveCoalescer, MOVE_WINDOW_MS, summaryFields } from './moveWatch'
 import { blockedStatesOn, isFinishedTask } from './taskDependencyService'
-import { emitAgentEventAsync, emitInBackground, githubDatabaseLookups } from './agentEvents'
+import { emitAgentEventAsync, emitInBackground, githubDatabaseLookups, type AgentEventInput } from './agentEvents'
 
 // The brief the task's log writes for a completion or a reopen (taskActivity.briefOf); a move starts "Moved to ".
 export const MARKED_DONE = 'Marked done'
@@ -105,6 +106,38 @@ export function unblockedRecipients(assigneeId: string | null | undefined, actor
   return [...new Set(all)]
 }
 
+/** The agent event of an unblock. A summary keeps the name of who acted in from, and says how many more it stands for in count. */
+export function unblockedEvent(payload: UnblockPayload, more: number): AgentEventInput {
+  return {
+    kind: 'unblocked',
+    board: payload.board,
+    task: payload.task,
+    from: payload.from,
+    ...summaryFields(more),
+    customerVisible: payload.customerVisible
+  }
+}
+
+/** The dependents a set of finished blockers held back, each with the blockers it waited for that finished now. */
+export function waitingOn(links: readonly { blockerId: string, id: string, title: string, visibility: 'internal' | 'customer', assigneeId: string | null, createdBy: string | null }[], blockers: readonly Blocker[]): Map<string, { task: TaskRef, freedBy: Blocker[] }> {
+  const blockerById = new Map(blockers.map(blocker => [blocker.id, blocker]))
+  const waiting = new Map<string, { task: TaskRef, freedBy: Blocker[] }>()
+  for (const link of links) {
+    const blocker = blockerById.get(link.blockerId)
+    if (!blocker) continue
+    const entry = waiting.get(link.id) ?? { task: { id: link.id, title: link.title, visibility: link.visibility, assigneeId: link.assigneeId, createdBy: link.createdBy }, freedBy: [] }
+    entry.freedBy.push(blocker)
+    waiting.set(link.id, entry)
+  }
+  return waiting
+}
+
+/** The Inbox note's body: it names the blocker only when one customer-visible blocker is all the task waited for. */
+export function unblockBody(freedBy: readonly Blocker[]): string {
+  const named = freedBy.length === 1 && freedBy[0]!.visibility === 'customer'
+  return named ? `"${freedBy[0]!.title}" is finished.` : 'A task it waited for is finished.'
+}
+
 type BoardRef = { id: string, name: string, userId: string, teamId: string | null, customerId: string | null }
 type TaskRef = { id: string, title: string, visibility: 'internal' | 'customer', assigneeId?: string | null, createdBy?: string | null }
 
@@ -117,14 +150,7 @@ type Blocker = { id: string, title: string, visibility: 'internal' | 'customer' 
 type UnblockPayload = { recipient: string, board: BoardRef, task: TaskRef, from: string, customerVisible: boolean }
 const unblockCoalescer = createMoveCoalescer<UnblockPayload>({
   send: (payload, more) => {
-    emitInBackground(() => emitAgentEventAsync(payload.recipient, {
-      kind: 'unblocked',
-      board: payload.board,
-      task: payload.task,
-      // A summary has no single task of its own: its count goes where the task's title goes.
-      from: more > 0 ? `${more} more unblocked tasks on ${payload.board.name}` : payload.from,
-      customerVisible: payload.customerVisible
-    }))
+    emitInBackground(() => emitAgentEventAsync(payload.recipient, unblockedEvent(payload, more)))
   }
 })
 
@@ -230,15 +256,7 @@ async function unblockedBy(board: BoardRef, blockers: Blocker[], actorId: string
     .from(taskDependencies)
     .innerJoin(projectTasks, eq(projectTasks.id, taskDependencies.blockedTaskId))
     .where(and(inArray(taskDependencies.blockerTaskId, blockers.map(blocker => blocker.id)), eq(projectTasks.projectId, board.id), isNull(projectTasks.deletedAt)))
-  const byId = new Map(blockers.map(blocker => [blocker.id, blocker]))
-  const waiting = new Map<string, { task: TaskRef, freedBy: Blocker[] }>()
-  for (const link of links) {
-    const blocker = byId.get(link.blockerId)
-    if (!blocker) continue
-    const entry = waiting.get(link.id) ?? { task: { id: link.id, title: link.title, visibility: link.visibility, assigneeId: link.assigneeId, createdBy: link.createdBy }, freedBy: [] }
-    entry.freedBy.push(blocker)
-    waiting.set(link.id, entry)
-  }
+  const waiting = waitingOn(links, blockers)
   if (!waiting.size) return
 
   const ids = [...waiting.keys()]
@@ -250,9 +268,7 @@ async function unblockedBy(board: BoardRef, blockers: Blocker[], actorId: string
   const pm = crew.filter(person => person.key === 'pm').map(person => person.userId)
   for (const id of freed) {
     const { task, freedBy } = waiting.get(id)!
-    // The Inbox note names the blocker only when one customer-visible blocker is all the task waited for.
-    const named = freedBy.length === 1 && freedBy[0]!.visibility === 'customer'
-    const body = named ? `"${freedBy[0]!.title}" is finished.` : 'A task it waited for is finished.'
+    const body = unblockBody(freedBy)
     if (task.assigneeId) noteCoalescer.offer(`${board.id}|${task.assigneeId}`, { board, task, recipient: task.assigneeId, actorId, body })
     const customerVisible = task.visibility === 'customer'
     for (const recipient of unblockedRecipients(task.assigneeId, actorId, pm)) {

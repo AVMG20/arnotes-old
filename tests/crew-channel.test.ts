@@ -334,6 +334,17 @@ test('a move summary with the longest title and name still fits one line of 400 
   })
 })
 
+test('an unblocked summary says how many more tasks it stands for', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(frame(1, { kind: 'unblocked', task: 'U1', board: 'B1', from: 'ann', origin: 'agent', title: 'Ship it', count: 4 }))
+    const summary = await until(() => ch.notes[0])
+    assert.ok(summary.content.includes('+ 4 more tasks unblocked on "B1"'), summary.content)
+    assert.equal(summary.content.includes('more moves'), false)
+    assert.ok(summary.content.includes('from "ann"'))
+  })
+})
+
 test('the resume point never passes an event still held in a merge group', async () => {
   await withChannel(async ({ srv, ch, home }) => {
     const state = join(home, 'channel-w2.state.json')

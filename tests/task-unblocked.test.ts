@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { AgentEventHub, deliverableTo, emitAgentEventWith, isAgentEventKind } from '../server/utils/agentEvents'
 import type { AgentBoard, AgentEventInput, AudienceLookups, StreamKey } from '../server/utils/agentEvents'
 
-import { MARKED_DONE, REOPENED, createNoteCoalescer, freedByBulk, unblockedIds, unblockedRecipients, wasUnfinished } from '../server/utils/unblockedWatch'
+import { MARKED_DONE, REOPENED, createNoteCoalescer, freedByBulk, unblockBody, unblockedEvent, unblockedIds, unblockedRecipients, waitingOn, wasUnfinished } from '../server/utils/unblockedWatch'
 
 const DAY = 24 * 60 * 60_000
 const BASE = 1_000_000
@@ -183,6 +183,50 @@ test('an Inbox note for another assignee, or after its window closed, is a note 
   notes.offer('board|ann', 'C')
   timers[2]!.fn()
   assert.deepEqual(sent, [{ first: 'A', more: 0 }, { first: 'B', more: 0 }, { first: 'C', more: 0 }])
+})
+
+test('a summary of unblocks keeps who acted as from, and says how many more it stands for', () => {
+  const board = { id: 'board-1', name: 'Board', userId: 'owner', teamId: 'crew-team', customerId: null }
+  const payload = { recipient: 'ann', board, task: { id: 'task-9', title: 'Ship the parser', visibility: 'internal' as const, assigneeId: 'ann' }, from: 'Bob', customerVisible: false }
+  assert.deepEqual(unblockedEvent(payload, 0), { kind: 'unblocked', board, task: payload.task, from: 'Bob', customerVisible: false })
+  assert.deepEqual(unblockedEvent(payload, 3), { kind: 'unblocked', board, task: payload.task, from: 'Bob', count: 3, customerVisible: false })
+})
+
+test('a dependent that waited for two freed blockers is one entry; the note names a blocker only when it is the one customer-visible blocker', () => {
+  const links: Parameters<typeof waitingOn>[0] = [
+    { blockerId: 'b1', id: 'dep', title: 'Dependent', visibility: 'internal', assigneeId: 'ann', createdBy: 'bob' },
+    { blockerId: 'b2', id: 'dep', title: 'Dependent', visibility: 'internal', assigneeId: 'ann', createdBy: 'bob' },
+    { blockerId: 'gone', id: 'other', title: 'Other', visibility: 'internal', assigneeId: null, createdBy: null }
+  ]
+  const blockers = [{ id: 'b1', title: 'Parser', visibility: 'customer' as const }, { id: 'b2', title: 'Lexer', visibility: 'internal' as const }]
+  const waiting = waitingOn(links, blockers)
+  assert.deepEqual([...waiting.keys()], ['dep'])
+  const freedBy = waiting.get('dep')!.freedBy
+  assert.equal(freedBy.length, 2)
+  assert.equal(unblockBody(freedBy), 'A task it waited for is finished.')
+  assert.equal(unblockBody([blockers[0]!]), '"Parser" is finished.')
+  assert.equal(unblockBody([blockers[1]!]), 'A task it waited for is finished.')
+})
+
+test('a column delete that frees two blockers of one dependent, while another stays blocked, tells the freed dependent once', () => {
+  const finished = new Set(['done'])
+  const rows = [
+    { id: 'b1', columnId: 'todo', completedAt: null, deletedAt: 5 },
+    { id: 'b2', columnId: 'done', completedAt: null, deletedAt: null },
+    { id: 'b3', columnId: 'todo', completedAt: null, deletedAt: null }
+  ]
+  const freedIds = freedByBulk(['b1', 'b2', 'b3'], rows, finished)
+  assert.deepEqual(freedIds, ['b1', 'b2'])
+  const links: Parameters<typeof waitingOn>[0] = [
+    { blockerId: 'b1', id: 'freed', title: 'Freed', visibility: 'internal', assigneeId: 'ann', createdBy: null },
+    { blockerId: 'b2', id: 'freed', title: 'Freed', visibility: 'internal', assigneeId: 'ann', createdBy: null },
+    { blockerId: 'b1', id: 'held', title: 'Held', visibility: 'internal', assigneeId: 'ann', createdBy: null },
+    { blockerId: 'b3', id: 'held', title: 'Held', visibility: 'internal', assigneeId: 'ann', createdBy: null }
+  ]
+  const waiting = waitingOn(links, freedIds.map(id => ({ id, title: id, visibility: 'internal' as const })))
+  assert.equal(waiting.get('freed')!.freedBy.length, 2)
+  const freed = unblockedIds([...waiting.keys()], new Map([['freed', { blocked: false }], ['held', { blocked: true }]]))
+  assert.deepEqual(freed, ['freed'])
 })
 
 test('a bulk change frees the blockers it finished: trashed ones and ones moved into a finished column, not the rest', () => {
