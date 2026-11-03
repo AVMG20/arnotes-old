@@ -136,6 +136,7 @@ and `origin` (empty except on `task_created`). The text is one line, for example
   - The card's assignee and creator hear all four, as the PM does. A team that is not a crew gets its owners and
     assignees only. A customer never hears any of them.
   - A failed and then a passed pair on one card within two seconds comes as one line, both kinds in `event`, in order.
+- - `delivery_failed` (the PM only): a GitHub delivery gave up for good and waits in the failed table. `ref` is the delivery id; the title has the event, the repository, the class (transient or permanent), the attempts and a short code, never the payload or the reason text. This is live only while the PM's channel is connected: the failed list (`list_failed_deliveries`) is the record, read it at the start of a round. The PM reads it, retries it once if the cause is gone (a retry after a claim expiry sends the same stored payload again), and otherwise discards it with a reason. `github_queue_status` shows the queue.
 - The card body is never in the event. Read it with `get_task`.
 
 **If events do not arrive:**

@@ -50,6 +50,8 @@ Boss's session keeps `crew channel boss` running (its own key, its own channel).
 ```
 No chat client (chat.client empty)? Then the board is the channel: steer the workers with board messages (`post_message`), and read the board's messages (`list_messages`) at the start of each round.
 
+Failed GitHub deliveries (`delivery_failed`, or `list_failed_deliveries`): handle each one as CREW.md "The PM, per event kind" says.
+
 You are {{people.pm}} (key `pm`, chat nick `{{nicks.pm}}`). Read {{crew_dir}}/CREW.md in full (including
 'Listening') and {{crew_dir}}/PROJECT-RULES.md, then {{crew_dir}}/PIA-UX.md. Run your standing loop:
 `node {{kit_dir}}/listen.mjs pm 60` repeatedly (10 s while active). Round 1: read BRIEF.md and the

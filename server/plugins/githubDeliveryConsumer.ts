@@ -1,4 +1,5 @@
 import { processGithubDelivery } from '../utils/githubCards'
+import { processTagDelivery, databaseTagStore } from '../utils/githubTags'
 import { databaseCardStore, databaseDeliveryLedger } from '../utils/githubCardStore'
 import { databaseFailureRows, purgeDeliveryPayloads } from '../utils/githubDeliveryFailures'
 import { ADAPTER_TIMEOUT_MS, BUDGET_MS, createDeliveryConsumer, SHUTDOWN_WAIT_MS } from '../utils/githubDeliveryConsumer'
@@ -44,7 +45,11 @@ export default defineNitroPlugin((nitroApp) => {
     {
       ledger: databaseDeliveryLedger,
       failures: databaseFailureRows,
-      apply: (job, signal) => processGithubDelivery(job, { store: databaseCardStore, signal }),
+      apply: (job, signal) => processGithubDelivery(job, {
+        store: databaseCardStore,
+        signal,
+        tagWork: (tagJob, tagSignal) => processTagDelivery(tagJob, { store: databaseTagStore, signal: tagSignal })
+      }),
       log: line => console.warn(line),
       budgetMs: timeouts.budgetMs
     }

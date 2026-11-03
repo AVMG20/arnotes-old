@@ -243,6 +243,120 @@ function keyFor(link: LinkRef, suffix: string): string {
   return `${link.owner.toLowerCase()}/${link.repo.toLowerCase()}#${link.ref}:${suffix}`
 }
 
+/** A pull request as the tags need it (GH3): its head commit now, its branch, author, head repository, and its text. */
+export interface PullFacts {
+  headSha: string
+  headRef: string
+  /** The head repository's full name, or null when it is gone (a deleted fork). */
+  headRepo: string | null
+  author: string
+  title: string
+  body: string
+  state: 'open' | 'closed'
+  merged: boolean
+}
+
+/**
+ * What one GitHub read for a tag gives. `missing` is a 404: the thing is not there, so no tag changes. `transient` is
+ * any failure a later attempt can fix: an outage, a timeout, a rate limit, or a cached failure during its backoff.
+ * `malformed` is an answer without the parts a tag needs; it fails the same way again, so it is permanent.
+ */
+export type GithubRead<T>
+  = | { kind: 'ok', value: T }
+    | { kind: 'missing' }
+    | { kind: 'transient', reason: string }
+    | { kind: 'malformed', reason: string }
+
+/** A full commit id in lower-case hex (SHA-1 or SHA-256). Only such an id goes into an API path. */
+export function validCommitSha(sha: unknown): sha is string {
+  return typeof sha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)
+}
+
+/** One cache answer as a read: a failure of any kind (also one served from the backoff window) is transient, a 404 is missing. */
+function fromPiece<T>(piece: Piece<T>): GithubRead<T> {
+  if (piece.failure?.code === 'not_found') return { kind: 'missing' }
+  if (piece.failure) return { kind: 'transient', reason: piece.failure.message }
+  if (piece.body === null || piece.body === undefined) return { kind: 'transient', reason: UNAVAILABLE }
+  return { kind: 'ok', value: piece.body }
+}
+
+/** A pull request as GitHub has it now (GH3 tags). Forced past the cache: a tag must not follow a cached head commit. */
+export async function readPullFacts(owner: string, repo: string, number: number): Promise<GithubRead<PullFacts>> {
+  const link = { kind: 'pull' as const, owner, repo, ref: String(number) }
+  const pull = await fetchPiece<RawPull>('pull', keyFor(link, 'pull'), `${repoBase(link)}/pulls/${number}`, true)
+  const read = fromPiece(pull)
+  if (read.kind !== 'ok') return read
+  const raw = read.value
+  if (!validCommitSha(raw.head?.sha) || typeof raw.head?.ref !== 'string' || (raw.state !== 'open' && raw.state !== 'closed')) {
+    return { kind: 'malformed', reason: 'GitHub sent a pull request without a usable head commit' }
+  }
+  return {
+    kind: 'ok',
+    value: {
+      headSha: raw.head.sha,
+      headRef: raw.head.ref,
+      headRepo: raw.head.repo?.full_name ?? null,
+      author: raw.user?.login ?? '',
+      title: typeof raw.title === 'string' ? raw.title : '',
+      body: typeof raw.body === 'string' ? raw.body : '',
+      state: raw.state,
+      merged: raw.merged === true || raw.merged_at != null
+    }
+  }
+}
+
+/** Check runs are read this many to a page, and at most this many pages: a list longer than that is unknown. */
+const CHECK_PAGE = 100
+const CHECK_PAGES = 10
+
+/**
+ * Every check run of a commit, read page by page with `page(n)`, until the total GitHub names is read. Fewer runs
+ * than the total is unknown (transient): a partial list can read as passing, so no state is made from it.
+ */
+export async function readAllCheckRuns(page: (n: number) => Promise<GithubRead<{ check_runs?: unknown, total_count?: unknown }>>): Promise<GithubRead<RawCheckRun[]>> {
+  const runs: RawCheckRun[] = []
+  let total = 0
+  for (let n = 1; n <= CHECK_PAGES; n++) {
+    const read = await page(n)
+    if (read.kind !== 'ok') return read
+    const list = read.value.check_runs
+    const count = read.value.total_count
+    if (!Array.isArray(list) || typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) {
+      return { kind: 'malformed', reason: 'GitHub sent a check-run list without its parts' }
+    }
+    for (const run of list) {
+      const named = run as { name?: unknown, status?: unknown }
+      if (!run || typeof run !== 'object' || typeof named.name !== 'string' || typeof named.status !== 'string') {
+        return { kind: 'malformed', reason: 'GitHub sent a check run without a name or status' }
+      }
+      runs.push(run as RawCheckRun)
+    }
+    total = count
+    if (runs.length >= total || list.length === 0) break
+  }
+  if (runs.length < total) {
+    return { kind: 'transient', reason: `GitHub names ${total} check runs and ${runs.length} were read: the state is unknown` }
+  }
+  return { kind: 'ok', value: runs }
+}
+
+/**
+ * The state of one commit from ALL its check runs (required and optional alike; legacy commit statuses are not read).
+ * Forced, as readPullFacts. A commit GitHub does not have is missing.
+ */
+export async function readChecksOfHead(owner: string, repo: string, number: number, sha: string): Promise<GithubRead<ChecksState>> {
+  if (!validCommitSha(sha)) return { kind: 'malformed', reason: 'the head commit is not a commit id' }
+  const link = { kind: 'pull' as const, owner, repo, ref: String(number) }
+  const read = await readAllCheckRuns(async n => fromPiece(await fetchPiece<{ check_runs?: unknown, total_count?: unknown }>(
+    'checks',
+    keyFor(link, `checks:${sha}:${n}`),
+    `${repoBase(link)}/commits/${sha}/check-runs?per_page=${CHECK_PAGE}&page=${n}`,
+    true
+  )))
+  if (read.kind !== 'ok') return read
+  return { kind: 'ok', value: checksOf(read.value).state }
+}
+
 function iso(ms: number | null | undefined): string | null {
   return typeof ms === 'number' ? new Date(ms).toISOString() : null
 }
@@ -287,6 +401,7 @@ interface RawPull {
   updated_at: string
   head: { ref: string, sha: string, repo?: { full_name?: string } | null }
   base: { ref: string }
+  body?: string | null
 }
 interface RawReview { user?: RawUser, state: string }
 interface RawCheckRun { name: string, status: string, conclusion: string | null, html_url?: string | null }
@@ -333,7 +448,7 @@ function reviewStateOf(reviews: RawReview[]): ReviewState {
 
 const PASSING = new Set(['success', 'neutral', 'skipped'])
 
-function checksOf(runs: RawCheckRun[]): { state: ChecksState, runs: CheckRunSummary[] } {
+export function checksOf(runs: RawCheckRun[]): { state: ChecksState, runs: CheckRunSummary[] } {
   const shown = runs.map(run => ({ name: run.name, status: run.status, conclusion: run.conclusion, htmlUrl: run.html_url ?? null }))
   if (runs.length === 0) return { state: 'none', runs: [] }
   const failing = runs.some(run => run.status === 'completed' && !PASSING.has(run.conclusion ?? ''))

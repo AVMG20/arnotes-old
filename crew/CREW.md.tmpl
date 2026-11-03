@@ -137,6 +137,8 @@ until then nothing emits them.
 - `merged_production` (the pull request went into production): nothing to do. Boss moves the card to Done when it
   publishes.
 
+- `delivery_failed` (PM only: live only while the PM's channel is connected, and the failed list is the record; a GitHub delivery gave up for good and waits in the failed table): no new card. List it with `list_failed_deliveries` and read it with `get_failed_delivery` (the event, the repository, the reason). If the cause is gone (the database or the broker was down), retry it once with `retry_failed_delivery`. Otherwise, or when a retry fails again, discard it with `discard_failed_delivery` and a reason of 3 to 300 characters. Tell the customer in `{{chat.channel}}` (`@{{customer.nick}} ...`) only when a GitHub change was lost, and copy what you said onto the card if there is one. `github_queue_status` shows the queue. Nothing from the payload goes into a message.
+
 **The workers.** A worker that has its own channel (a Claude Code session started with `crew channel <key>`) gets
 only its own events. `task_assigned` is the signal to work: `get_task`, move the card to In progress, and work as
 in "Worker round". Feedback from Boss or the PM arrives as `reply` (the owner of a card hears of each comment on

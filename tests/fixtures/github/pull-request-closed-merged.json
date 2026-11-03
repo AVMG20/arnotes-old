@@ -1,0 +1,62 @@
+{
+  "action": "closed",
+  "number": 31,
+  "pull_request": {
+    "url": "https://api.github.com/repos/example-owner/example-repo/pulls/31",
+    "id": 1000000031,
+    "html_url": "https://github.com/example-owner/example-repo/pull/31",
+    "diff_url": "https://github.com/example-owner/example-repo/pull/31.diff",
+    "number": 31,
+    "state": "closed",
+    "locked": false,
+    "title": "Fixes #24: rename the export button",
+    "user": { "login": "example-owner", "id": 1, "type": "User", "html_url": "https://github.com/example-owner" },
+    "body": "Closes #25.\n\nRecorded fixture for the tag tests. No real data.",
+    "created_at": "2026-11-02T10:00:00Z",
+    "updated_at": "2026-11-02T12:00:00Z",
+    "closed_at": "2026-11-02T12:00:00Z",
+    "merged_at": "2026-11-02T12:00:00Z",
+    "merge_commit_sha": "5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f",
+    "merged": true,
+    "mergeable": null,
+    "draft": false,
+    "head": {
+      "label": "example-owner:feature/export-button",
+      "ref": "feature/export-button",
+      "sha": "3f9c1d0e7b2a4c5d6e8f9a0b1c2d3e4f5a6b7c8d",
+      "user": { "login": "example-owner", "id": 1, "type": "User" },
+      "repo": {
+        "id": 2,
+        "name": "example-repo",
+        "full_name": "example-owner/example-repo",
+        "private": false,
+        "owner": { "login": "example-owner", "id": 1, "type": "User" },
+        "default_branch": "main"
+      }
+    },
+    "base": {
+      "label": "example-owner:main",
+      "ref": "main",
+      "sha": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567",
+      "user": { "login": "example-owner", "id": 1, "type": "User" },
+      "repo": {
+        "id": 2,
+        "name": "example-repo",
+        "full_name": "example-owner/example-repo",
+        "private": false,
+        "owner": { "login": "example-owner", "id": 1, "type": "User" },
+        "default_branch": "main"
+      }
+    }
+  },
+  "repository": {
+    "id": 2,
+    "name": "example-repo",
+    "full_name": "example-owner/example-repo",
+    "private": false,
+    "owner": { "login": "example-owner", "id": 1, "type": "User" },
+    "html_url": "https://github.com/example-owner/example-repo",
+    "default_branch": "main"
+  },
+  "sender": { "login": "example-owner", "id": 1, "type": "User" }
+}

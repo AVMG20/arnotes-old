@@ -6,9 +6,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   AgentEventHub, audienceOfEvent, cleanEventText, deliverableTo, emitAgentEventWith, emitInBackground,
-  crewPeopleFrom, emitGithubEventWith, frameOfEvent, GITHUB_EVENT_KINDS, githubAudience, parseLastEventId, replyRecipients, stillMember
+  crewPeopleFrom, emitGithubEventWith, frameOfEvent, GITHUB_EVENT_KINDS, githubAudience, parseLastEventId, replyRecipients, stillMember,
+  AGENT_EVENT_KINDS, announceDeliveryFailed, emitDeliveryFailedWith, isAgentEventKind
 } from '../server/utils/agentEvents'
-import type { AgentEventInput, AgentEventRecord, AudienceLookups, CloseReason, GithubEventKind, GithubLookups, Membership, StreamKey, Verify } from '../server/utils/agentEvents'
+import type { AgentBoard, AgentEventInput, AgentEventRecord, AudienceLookups, CloseReason, DeliveryFailure, DeliveryLookups, GithubEventKind, GithubLookups, Membership, StreamKey, Verify } from '../server/utils/agentEvents'
 
 const DAY = 24 * 60 * 60_000
 const BASE = 1_000_000
@@ -835,4 +836,100 @@ test('a reserved stream evicted by a newer one for its key cannot start, and wri
   assert.equal(hub.streamCount, 1)
   second.release()
   assert.equal(hub.streamCount, 0)
+})
+
+// ── delivery_failed (GH6c): the crew's pm only, ids and a code ─────────
+
+const deliveryNotice: DeliveryFailure = {
+  deliveryId: 'd-1', event: 'pull_request', owner: 'example-owner', repo: 'arnotes', class: 'permanent', attempts: 1, code: 'not-json'
+}
+
+/** Delivery lookups over the given board, members, crew people and owners. */
+function deliveryLookups(board: AgentBoard | null, members: Record<string, string[]>, people: { userId: string, key: string }[], owners: string[] = []): DeliveryLookups {
+  return { ...githubLookups(members, people), linkedBoard: async () => board, teamOwners: async () => owners }
+}
+
+test('delivery_failed reaches the crew pm only, with the ids and the code and nothing else', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user', 'boss-user', 'w1-user'], 'team-c')
+  assert.equal(await emitDeliveryFailedWith(hub, deliveryLookups(crewBoard, crewMembers, crewPeople), deliveryNotice), 1)
+  const frames = framesOf(streams['pm-user']!)
+  assert.deepEqual(frames.map(data => data.kind), ['delivery_failed'])
+  assert.equal(frames[0]!.is_pm, true)
+  assert.equal(frames[0]!.task, null)
+  assert.equal(frames[0]!.ref, 'd-1')
+  assert.equal(frames[0]!.title, 'pull_request example-owner/arnotes: permanent, 1 attempts (not-json)')
+  assert.deepEqual(Object.keys(frames[0]!).sort(), ['assigned_to_me', 'board', 'from', 'is_boss', 'is_pm', 'kind', 'needs_feedback_from_me', 'origin', 'ref', 'task', 'title'])
+  assert.deepEqual(framesOf(streams['boss-user']!), [], 'Boss hears nothing of a failed delivery')
+  assert.deepEqual(framesOf(streams['w1-user']!), [], 'a worker hears nothing of it')
+})
+
+test('delivery_failed: control characters and length from GitHub are cut before the frame, the delivery id too', async () => {
+  const { hub } = makeHub()
+  const streams = streamsFor(hub, ['pm-user'], 'team-c')
+  const hostile: DeliveryFailure = {
+    ...deliveryNotice,
+    event: 'pull\nrequest\u2028',
+    owner: 'o'.repeat(200),
+    repo: 'r\u0007epo',
+    deliveryId: 'x'.repeat(80) + '\n',
+    code: 'timeout'
+  }
+  await emitDeliveryFailedWith(hub, deliveryLookups(crewBoard, crewMembers, crewPeople), hostile)
+  const [frame] = framesOf(streams['pm-user']!)
+  const title = frame!.title as string
+  assert.ok(title.length <= 120, 'the title is cut')
+  assert.doesNotMatch(title, /[\n\r\u2028]/)
+  assert.equal(title.includes('\u0007'), false)
+  assert.equal((frame!.ref as string).length, 60, 'the delivery id is cut to the ref limit')
+})
+
+test('delivery_failed: a team that is not a crew gets it for its owners only', async () => {
+  const { hub } = makeHub()
+  const members = { 'owner-user': ['team-p'], 'member-user': ['team-p'] }
+  const streams = streamsFor(hub, ['owner-user', 'member-user'], 'team-p')
+  const board = { id: 'board-p', userId: 'owner-user', teamId: 'team-p', customerId: null }
+  assert.equal(await emitDeliveryFailedWith(hub, deliveryLookups(board, members, [], ['owner-user']), deliveryNotice), 1)
+  assert.deepEqual(framesOf(streams['owner-user']!).map(data => data.kind), ['delivery_failed'])
+  assert.equal(framesOf(streams['owner-user']!)[0]!.is_pm, false, 'not a crew: no pm flag')
+  assert.deepEqual(framesOf(streams['member-user']!), [])
+})
+
+test('delivery_failed: a personal board goes to its owner; a repository with no board sends nothing', async () => {
+  const { hub } = makeHub()
+  const mine = open(hub, key('k-me', 'me', null), undefined, { teamIds: [], customerIds: [] }).connection
+  const personal = { id: 'board-me', userId: 'me', teamId: null, customerId: null }
+  assert.equal(await emitDeliveryFailedWith(hub, deliveryLookups(personal, {}, []), deliveryNotice), 1)
+  assert.equal(framesOf(mine).length, 1)
+  assert.equal(await emitDeliveryFailedWith(hub, deliveryLookups(null, {}, []), deliveryNotice), 0, 'no board: nothing is sent')
+})
+
+test('delivery_failed: nobody watched means no database read; a customer contact never hears it', async () => {
+  const { hub } = makeHub()
+  let read = false
+  const quiet: DeliveryLookups = {
+    ...deliveryLookups(crewBoard, crewMembers, crewPeople),
+    linkedBoard: async () => {
+      read = true
+      return crewBoard
+    }
+  }
+  assert.equal(await emitDeliveryFailedWith(hub, quiet, deliveryNotice), 0)
+  assert.equal(read, false, 'no board is read while nobody is watched')
+
+  const streams = streamsFor(hub, ['pm-user', 'contact-user'], 'team-c')
+  const onCustomerBoard = deliveryLookups({ ...crewBoard, customerId: 'acme' }, { ...crewMembers, 'contact-user': [] }, crewPeople)
+  assert.equal(await emitDeliveryFailedWith(hub, onCustomerBoard, deliveryNotice), 1, 'the pm hears it')
+  assert.deepEqual(framesOf(streams['pm-user']!).map(data => data.kind), ['delivery_failed'])
+  assert.deepEqual(framesOf(streams['contact-user']!), [], 'a contact hears nothing of a failed delivery')
+})
+
+test('delivery_failed: the entry point never throws while nobody is watched', () => {
+  assert.doesNotThrow(() => announceDeliveryFailed(deliveryNotice))
+})
+
+test('delivery_failed is an agent event kind, not a card kind', () => {
+  assert.ok(AGENT_EVENT_KINDS.includes('delivery_failed'))
+  assert.ok(!(GITHUB_EVENT_KINDS as readonly string[]).includes('delivery_failed'))
+  assert.equal(isAgentEventKind('delivery_failed'), true)
 })

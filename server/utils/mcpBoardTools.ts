@@ -20,6 +20,8 @@ import { projectPeople } from './people'
 import { readTaskGithubLinks } from './githubTaskLinks'
 import { notifyAssigned, notifyTaskChange } from './notifyEvents'
 import { announceTaskCreated } from './agentEvents'
+import { recordAgentAction } from './agentAudit'
+import { pmDiscard, pmGet, pmList, pmQueueStatus, pmRetry, type FailureState } from './githubDeliveryFailures'
 import { fireRules, newRuleChain } from './ruleEngine'
 import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
@@ -485,6 +487,111 @@ function columnSpot(afterRef: string | undefined, resolvedId: string | undefined
 
 // ─── tools ────────────────────────────────────────────────────────────────────
 
+// The PM's delivery tools (GH6c). Staff only: a key sees the failed deliveries of the repositories its team's projects
+// link, and a delivery of any other repository is refused with the same words as one that does not exist
+// (githubDeliveryFailures: managedRepos, pmGet and the others). Retry and discard are audited, refusals included.
+const DELIVERY_ID = { type: 'string', description: 'The delivery id, from list_failed_deliveries.' }
+const DELIVERY_STATES = ['failed', 'retried', 'discarded', 'resolved', 'all']
+
+const LIST_FAILED_DELIVERIES: McpToolDefinition = {
+  name: 'list_failed_deliveries',
+  title: 'List failed GitHub deliveries',
+  description: 'The GitHub deliveries that gave up, newest first, for the repositories of your team\'s projects: the event, the repository, the class (transient or permanent), the attempts, the state and the reason in one line. Metadata only, never the payload. Read one with get_failed_delivery; retry it or discard it after that.',
+  scope: 'boards:read',
+  readOnly: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      limit: { type: 'number', description: 'How many to show, newest first. Default 50, at most 200.' },
+      state: { type: 'string', enum: DELIVERY_STATES, description: 'The state to show. Default failed.' }
+    }
+  },
+  async handler(args, context) {
+    const state = optionalString(args, 'state') ?? 'failed'
+    if (!DELIVERY_STATES.includes(state)) throw new McpToolError('"state" must be failed, retried, discarded, resolved or all.')
+    return pmList(context, { limit: optionalLimit(args, 'limit', 50, 200), state: state as FailureState | 'all' })
+  }
+}
+
+const GET_FAILED_DELIVERY: McpToolDefinition = {
+  name: 'get_failed_delivery',
+  title: 'Read a failed GitHub delivery',
+  description: 'One failed GitHub delivery: its metadata and a short preview of its payload (the event, the action, the repository, the issue or pull request number, and the title cut to 120 characters). Never the payload or the body.',
+  scope: 'boards:read',
+  readOnly: true,
+  audit: true,
+  inputSchema: {
+    type: 'object',
+    properties: { id: DELIVERY_ID },
+    required: ['id']
+  },
+  async handler(args, context) {
+    return pmGet(context, requireString(args, 'id'))
+  }
+}
+
+const RETRY_FAILED_DELIVERY: McpToolDefinition = {
+  name: 'retry_failed_delivery',
+  title: 'Retry a failed GitHub delivery',
+  description: 'Crew pm key only. Send a failed GitHub delivery back into the queue once, with the payload GitHub sent. Use it when the cause is gone (the database or the broker was down). It answers retried, already retried, not failed, payload expired, or claim expired — retried again when an earlier retry had stalled. A second call changes nothing.',
+  scope: 'boards:write',
+  readOnly: false,
+  inputSchema: {
+    type: 'object',
+    properties: { id: DELIVERY_ID },
+    required: ['id']
+  },
+  async handler(args, context) {
+    const id = requireString(args, 'id')
+    try {
+      return await pmRetry(context, id)
+    } catch (error) {
+      if (error instanceof McpToolError) await recordAgentAction(RETRY_FAILED_DELIVERY, args, { deliveryId: id, outcome: 'refused', message: error.message }, context)
+      throw error
+    }
+  }
+}
+
+const DISCARD_FAILED_DELIVERY: McpToolDefinition = {
+  name: 'discard_failed_delivery',
+  title: 'Discard a failed GitHub delivery',
+  description: 'Crew pm key only. Drop a failed GitHub delivery for good, with a reason of 3 to 300 characters that is kept in the audit. The GitHub change it carried is not applied. The payload stays in the record until its retention ends, for the audit.',
+  scope: 'boards:write',
+  readOnly: false,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: DELIVERY_ID,
+      reason: { type: 'string', description: 'Why the delivery is dropped, 3 to 300 characters.' }
+    },
+    required: ['id', 'reason']
+  },
+  async handler(args, context) {
+    const id = requireString(args, 'id')
+    try {
+      const reason = requireString(args, 'reason').trim()
+      if (reason.length < 3 || reason.length > 300) throw new McpToolError('"reason" must be 3 to 300 characters: say why the delivery is dropped.')
+      return await pmDiscard(context, id, reason)
+    } catch (error) {
+      if (error instanceof McpToolError) await recordAgentAction(DISCARD_FAILED_DELIVERY, args, { deliveryId: id, outcome: 'refused', message: error.message }, context)
+      throw error
+    }
+  }
+}
+
+const GITHUB_QUEUE_STATUS: McpToolDefinition = {
+  name: 'github_queue_status',
+  title: 'GitHub delivery queue status',
+  description: 'The state of the queue GitHub deliveries wait in: the broker state as a fixed word with a sentence, how many wait, how many gave up for good, and the failed rows of your repositories by state. The broker address, its credentials, any host and any port are never shown. Not audited: a read.',
+  scope: 'boards:read',
+  readOnly: true,
+  inputSchema: { type: 'object', properties: {} },
+  async handler(_args, context) {
+    return pmQueueStatus(context)
+  }
+}
+
+const DELIVERY_TOOLS: McpToolDefinition[] = [LIST_FAILED_DELIVERIES, GET_FAILED_DELIVERY, RETRY_FAILED_DELIVERY, DISCARD_FAILED_DELIVERY, GITHUB_QUEUE_STATUS]
 export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
   {
     name: 'list_boards',
@@ -1359,5 +1466,6 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
         column: restored?.name ?? columnId
       }
     }
-  }
+  },
+  ...DELIVERY_TOOLS
 ]
