@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { AgentEventHub, deliverableTo, emitAgentEventWith, isAgentEventKind } from '../server/utils/agentEvents'
 import type { AgentBoard, AgentEventInput, AudienceLookups, StreamKey } from '../server/utils/agentEvents'
 
-import { MARKED_DONE, REOPENED, unblockedIds, unblockedRecipients, wasUnfinished } from '../server/utils/unblockedWatch'
+import { MARKED_DONE, REOPENED, createNoteCoalescer, freedByBulk, unblockedIds, unblockedRecipients, wasUnfinished } from '../server/utils/unblockedWatch'
 
 const DAY = 24 * 60 * 60_000
 const BASE = 1_000_000
@@ -155,4 +155,43 @@ test('a customer-visible unblock reaches the customer contact too', async () => 
   assert.equal(await emitAgentEventWith(hub, contactLookups, 'contact-1', unblocked(true)), true)
   assert.match(contact.text(), /^event: unblocked$/m)
   assert.equal(deliverableTo({ audience: 'customer', teamId: null }, null), true)
+})
+
+test('an Inbox note for a window waits for the window to close, and counts the rest', () => {
+  const sent: { first: string, more: number }[] = []
+  const timers: { fn: () => void, ms: number }[] = []
+  const notes = createNoteCoalescer<string>({ send: (first, more) => sent.push({ first, more }), windowMs: 30_000, schedule: (fn, ms) => timers.push({ fn, ms }) })
+  notes.offer('board|ann', 'Ship the parser')
+  notes.offer('board|ann', 'Fix the lexer')
+  notes.offer('board|ann', 'Tidy the docs')
+  assert.deepEqual(sent, [])
+  assert.equal(timers.length, 1)
+  assert.equal(timers[0]!.ms, 30_000)
+  timers[0]!.fn()
+  assert.deepEqual(sent, [{ first: 'Ship the parser', more: 2 }])
+  assert.equal(notes.openWindows(), 0)
+})
+
+test('an Inbox note for another assignee, or after its window closed, is a note of its own', () => {
+  const sent: { first: string, more: number }[] = []
+  const timers: { fn: () => void, ms: number }[] = []
+  const notes = createNoteCoalescer<string>({ send: (first, more) => sent.push({ first, more }), schedule: (fn, ms) => timers.push({ fn, ms }) })
+  notes.offer('board|ann', 'A')
+  notes.offer('board|bob', 'B')
+  timers[0]!.fn()
+  timers[1]!.fn()
+  notes.offer('board|ann', 'C')
+  timers[2]!.fn()
+  assert.deepEqual(sent, [{ first: 'A', more: 0 }, { first: 'B', more: 0 }, { first: 'C', more: 0 }])
+})
+
+test('a bulk change frees the blockers it finished: trashed ones and ones moved into a finished column, not the rest', () => {
+  const finished = new Set(['done'])
+  const rows = [
+    { id: 'trashed', columnId: 'todo', completedAt: null, deletedAt: 5 },
+    { id: 'moved-done', columnId: 'done', completedAt: null, deletedAt: null },
+    { id: 'moved-todo', columnId: 'todo', completedAt: null, deletedAt: null }
+  ]
+  assert.deepEqual(freedByBulk(['trashed', 'moved-done', 'moved-todo', 'not-read'], rows, finished), ['trashed', 'moved-done'])
+  assert.deepEqual(freedByBulk([], rows, finished), [])
 })

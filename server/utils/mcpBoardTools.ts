@@ -19,7 +19,7 @@ import { MAX_PROJECT_DESCRIPTION, PROJECT_STATUSES, parseDueOn, parseProjectStat
 import { projectPeople } from './people'
 import { readTaskGithubLinks } from './githubTaskLinks'
 import { notifyAssigned, notifyTaskChange } from './notifyEvents'
-import { tellUnblockedOnTrash } from './unblockedWatch'
+import { tellUnblockedAfterBulk, tellUnblockedOnTrash, unfinishedTasksOn } from './unblockedWatch'
 import { announceTaskCreated } from './agentEvents'
 import { recordAgentAction } from './agentAudit'
 import { pmDiscard, pmGet, pmList, pmQueueStatus, pmRetry, type FailureState } from './githubDeliveryFailures'
@@ -1134,8 +1134,8 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const affected = (await columnTasksOrdered(column.id)).length
       const stamp = agentDeletion(context)
 
-      // Known gap (GH #36 slice 5): the cards moved or trashed here are changed in bulk, so no unblocked news is sent for a
-      // blocker that finishes this way. Left as is; see the card.
+      // The cards below are changed in bulk: the tasks unfinished before are read first, so the news can be sent (GH #36).
+      const unfinished = await unfinishedTasksOn(board, column.id)
       if (target) {
         // Where they came from is recorded, so restore_column brings them home
         // rather than handing back an empty column.
@@ -1155,6 +1155,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       }
 
       await db.update(projectColumns).set(stamp).where(eq(projectColumns.id, column.id))
+      await tellUnblockedAfterBulk(board, unfinished, context.userId)
       await touchBoard(board.id)
 
       return {
