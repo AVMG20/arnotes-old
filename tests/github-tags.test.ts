@@ -197,6 +197,7 @@ function run(job: DeliveryJob, store: FakeStore, github: FakeGithub, events: Git
     store,
     github,
     budget: extra.budget ?? new ReadBudget(10_000),
+    refreshBudget: new ReadBudget(10_000),
     announce: extra.announce ?? (event => events.push(event))
   })
 }
@@ -531,7 +532,18 @@ test('a stranger with a Fixes #24 in the title: the pull card is tagged, the iss
   assert.deepEqual(store.cards.get('card-pr')!.tags, ['pipeline failed'])
   assert.deepEqual(store.cards.get('card-24')!.tags, [])
   assert.deepEqual(store.cards.get('card-25')!.tags, [])
-  assert.deepEqual(store.askedIssues, [[]], 'the keywords were not even asked for')
+  assert.ok(store.askedIssues.every(issues => issues.length === 0), 'the keywords were not even asked for')
+})
+
+test('a stranger pull request that no card is linked to is not read at all, keywords and all', async () => {
+  const store = standardStore({ links: [{ cardId: 'card-24', kind: 'issue', ref: '24' }, { cardId: 'card-25', kind: 'issue', ref: '25' }] })
+  const github = fakeGithub()
+  const budget = new ReadBudget(1)
+  const job = jobOf('pull_request', fixture('pull-request-opened', { 'pull_request.user.login': 'stranger-example', 'pull_request.title': 'Fixes #24: rename the export button' }))
+  assert.equal(await run(job, store, github, [], { budget }), 'ignored')
+  assert.equal(github.calls.pull + github.calls.checks + github.calls.refresh, 0)
+  assert.equal(budget.take(`${OWNER}/${REPO}`.toLowerCase()), true, 'no read was taken from the budget')
+  assert.deepEqual(store.cards.get('card-24')!.tags, [])
 })
 
 test('a fork pull request with the keyword, from an accepted login: no issue tags and no issue event', async () => {
@@ -647,6 +659,16 @@ test('a read budget that is spent: the delivery is transient before any read', a
   await run(jobOf('pull_request', fixture('pull-request-closed-unmerged'), 'b-1'), store, github, [], { budget })
   await assert.rejects(run(jobOf('check_run', fixture('check-run-completed'), 'b-2'), store, github, [], { budget }), (error: unknown) => error instanceof DeliveryError && error.kind === 'transient')
   assert.equal(github.calls.pull, 1)
+})
+
+test('the link refresh has a bucket of its own: with the tag budget spent, a merged pull request still fires it', async () => {
+  const store = standardStore({ cards: [{ ...PULL_CARD }], links: [{ cardId: 'card-pr', kind: 'pull', ref: '31' }] })
+  const github = fakeGithub()
+  const budget = new ReadBudget(1)
+  budget.take(`${OWNER}/${REPO}`.toLowerCase())
+  await assert.rejects(run(jobOf('pull_request', fixture('pull-request-closed-merged'), 'refresh-1'), store, github, [], { budget }), (error: unknown) => error instanceof DeliveryError && error.kind === 'transient')
+  assert.equal(github.calls.refresh, 1)
+  assert.equal(github.calls.pull, 0)
 })
 
 test('a check run with more than PULL_LIMIT pull requests logs the cut once', async () => {
