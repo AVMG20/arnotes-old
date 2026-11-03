@@ -52,7 +52,7 @@ const newTeamName = ref('')
 const createLoading = ref(false)
 const createError = ref('')
 
-// Join Team form
+// Join a team with a code form
 const joinCodeInput = ref('')
 const joinLoading = ref(false)
 const joinError = ref('')
@@ -336,10 +336,10 @@ function confirmDeleteTeam() {
       </template>
     </UModal>
 
-    <!-- Join Team Modal -->
+    <!-- Join a team with a code modal -->
     <UModal
       v-model:open="isJoinOpen"
-      title="Join Team with Code"
+      title="Join a team with a code"
       description="Enter a team code shared by a teammate to join."
     >
       <template #body>
@@ -381,7 +381,7 @@ function confirmDeleteTeam() {
               color="primary"
               :loading="joinLoading"
             >
-              Join Team
+              Join a team with a code
             </UButton>
           </div>
         </form>

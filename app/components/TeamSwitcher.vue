@@ -76,7 +76,7 @@ const dropdownItems = computed<DropdownMenuItem[]>(() => {
   }
 
   items.push({
-    label: 'Join Team with Code',
+    label: 'Join a team with a code',
     icon: 'i-lucide-key-round',
     onSelect: () => { showJoinModal.value = true }
   })
@@ -122,7 +122,7 @@ const dropdownItems = computed<DropdownMenuItem[]>(() => {
             data-team-join-link
             @click="showJoinModal = true"
           >
-            Join a team
+            Join a team with a code
           </button>
         </p>
       </template>
