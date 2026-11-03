@@ -295,6 +295,45 @@ test('events for the same task within 2 seconds become one notification', async 
   })
 })
 
+test('a move summary says how many more moves it stands for; an ordinary move has no tail', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(frame(1, { kind: 'task_moved', task: 'S1', board: 'B1', from: 'pia', origin: 'agent', title: 'Card one', count: 3 }))
+    srv.send(frame(2, { kind: 'task_moved', task: 'S2', board: 'B1', from: 'pia', origin: 'agent', title: 'Card two' }))
+    await until(() => ch.notes.length >= 2)
+    const summary = ch.notes.find(note => note.meta.task === 'S1')
+    const ordinary = ch.notes.find(note => note.meta.task === 'S2')
+    assert.ok(summary && ordinary)
+    assert.ok(summary.content.includes('+ 3 more moves on "B1"'), summary.content)
+    assert.ok(summary.content.includes('from "pia"'))
+    assert.equal(ordinary.content.includes('more moves'), false)
+  })
+})
+
+test('a move summary count is clamped to 999 in the line, and a count that is not a number gives no tail', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(frame(1, { kind: 'task_moved', task: 'C1', board: 'B1', from: 'pia', origin: 'agent', title: 'Big', count: 5000 }))
+    srv.send(frame(2, { kind: 'task_moved', task: 'C2', board: 'B1', from: 'pia', origin: 'agent', title: 'Odd', count: '7' }))
+    await until(() => ch.notes.length >= 2)
+    const big = ch.notes.find(note => note.meta.task === 'C1')
+    const odd = ch.notes.find(note => note.meta.task === 'C2')
+    assert.ok(big && odd)
+    assert.ok(big.content.includes('+ 999 more moves on'), big.content)
+    assert.equal(odd.content.includes('more moves'), false)
+  })
+})
+
+test('a move summary with the longest title and name still fits one line of 400 characters', async () => {
+  await withChannel(async ({ srv, ch }) => {
+    await until(() => srv.connected())
+    srv.send(frame(1, { kind: 'task_moved', task: 'T'.repeat(40), board: 'B'.repeat(60), from: 'p'.repeat(80), origin: 'agent', title: 't'.repeat(300), count: 12 }))
+    const note = await until(() => ch.notes[0])
+    assert.ok(note.content.length <= 400, String(note.content.length))
+    assert.ok(note.content.includes('+ 12 more moves on'))
+  })
+})
+
 test('the resume point never passes an event still held in a merge group', async () => {
   await withChannel(async ({ srv, ch, home }) => {
     const state = join(home, 'channel-w2.state.json')

@@ -6,7 +6,7 @@ import { projectColumns, projectMessages, projectRules, projectTasks, taskCommen
 import { notificationExcerpt, notify } from './notifications'
 import { projectPeople } from './people'
 import { agentEventHub, emitAgentEventAsync, emitInBackground, githubDatabaseLookups, replyRecipients } from './agentEvents'
-import { agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, moveRecipients } from './moveWatch'
+import { agentHearsMove, createMoveCoalescer, isDefaultMoveColumn, moveRecipients, summaryFields } from './moveWatch'
 import { tellUnblockedOnChange } from './unblockedWatch'
 import type { ReplyWriter } from './agentEvents'
 
@@ -170,8 +170,9 @@ const moveCoalescer = createMoveCoalescer<MovePayload>({
       kind: 'task_moved',
       board: payload.board,
       task: payload.task,
-      // A summary has no mover of its own: its count goes where the mover's name goes.
-      from: more > 0 ? `${more} more moves on ${payload.board.name}` : payload.from,
+      // A summary keeps the name of who acted in from, and says how many more moves it stands for in count.
+      from: payload.from,
+      ...summaryFields(more),
       customerVisible: payload.customerVisible
     }))
   }

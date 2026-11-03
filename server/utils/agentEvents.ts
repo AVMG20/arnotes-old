@@ -82,6 +82,8 @@ export interface AgentEventInput {
   /** Whether a customer may see this item: the card is customer-visible and, for a comment, so is the comment. */
   customerVisible: boolean
   needsFeedbackFromMe?: boolean
+  /** On a move summary only: how many more moves it stands for. Absent on every other event. */
+  count?: number
 }
 
 /** One GitHub change to a card's pull request. The card's owners are its assignee and its creator. */
@@ -105,6 +107,8 @@ export interface AgentEventRecord {
   title: string
   ref: string | null
   needsFeedbackFromMe: boolean
+  /** On a move summary only: how many more moves it stands for. Absent on every other event. */
+  count?: number
   assignedToMe: boolean
   /** The crew's pm and boss, for the recipient: true on the GitHub kinds only. */
   isPm: boolean
@@ -205,7 +209,9 @@ export function frameOfEvent(record: AgentEventRecord): string {
     needs_feedback_from_me: record.needsFeedbackFromMe,
     assigned_to_me: record.assignedToMe,
     is_pm: record.isPm,
-    is_boss: record.isBoss
+    is_boss: record.isBoss,
+    // Only a move summary has a count: every other frame has no such field.
+    ...(record.count === undefined ? {} : { count: record.count })
   })
   return `id: ${record.id}\nevent: ${record.kind}\ndata: ${data}\n\n`
 }
@@ -666,7 +672,8 @@ export async function emitAgentEventWith(
     isBoss: false,
     audience,
     teamId: input.board.teamId,
-    customerId: input.board.customerId
+    customerId: input.board.customerId,
+    ...(input.count === undefined ? {} : { count: input.count })
   })
   return true
 }

@@ -2,7 +2,7 @@
 // app and by the agent tools alike, so it reads the same whoever did it.
 import { asc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db'
-import { projectColumns, taskActivity, user } from '../db/schema'
+import { projectColumns, projectTasks, taskActivity, user } from '../db/schema'
 import type { ActivitySource, ProjectTask, TaskActivityKind } from '../db/schema'
 
 export interface ActivityEntry {
@@ -47,6 +47,37 @@ export async function logActivity(
     // One request's entries keep their order even when they share a millisecond.
     createdAt: now + index
   })))
+}
+
+/** A link title on the activity line, cut so one long title cannot fill it. */
+export function cutTitle(title: string): string {
+  return title.length > 80 ? `${title.slice(0, 79).trimEnd()}…` : title
+}
+
+/**
+ * What a reader is shown for a row. The stored blocker id is for the app and never shown. A staff reader
+ * sees a blocker's live title while the blocker still exists; a customer, and a blocker that is gone, keep
+ * the stored text.
+ */
+export function readerDetail(entry: Pick<ActivityRow, 'kind' | 'detail'>, forCustomer: boolean, liveTitle: string | null): Record<string, string | null> {
+  const shown: Record<string, string | null> = { ...entry.detail }
+  delete shown.blockerId
+  if (forCustomer || liveTitle === null) return shown
+  if (entry.kind === 'blocker_added') return { ...shown, to: cutTitle(liveTitle) }
+  if (entry.kind === 'blocker_removed') return { ...shown, from: cutTitle(liveTitle) }
+  return shown
+}
+
+/**
+ * The live titles a staff reader is shown, by blocker id. A blocker in the trash keeps the stored text: the line
+ * reads as it was written, and a restore brings the live title back. The customer view never gets here.
+ */
+export function liveTitlesOf(found: { id: string, title: string, deletedAt: unknown }[]): Map<string, string> {
+  const titles = new Map<string, string>()
+  for (const blocker of found) {
+    if (blocker.deletedAt === null || blocker.deletedAt === undefined) titles.set(blocker.id, blocker.title)
+  }
+  return titles
 }
 
 /** What a change comes to in a few words, for an Inbox item. */
@@ -124,12 +155,21 @@ export async function listActivity(task: ProjectTask, forCustomer: boolean): Pro
     }
   }
 
+  // A staff reader sees a blocker's live title; the customer view never looks one up.
+  const blockerIds = forCustomer ? [] : [...new Set(rows.map(row => row.detail.blockerId).filter((id): id is string => !!id))]
+  const liveTitles = new Map<string, string>()
+  if (blockerIds.length) {
+    for (const [id, title] of liveTitlesOf(await db.select({ id: projectTasks.id, title: projectTasks.title, deletedAt: projectTasks.deletedAt }).from(projectTasks).where(inArray(projectTasks.id, blockerIds)))) {
+      liveTitles.set(id, title)
+    }
+  }
+
   const list: ActivityRow[] = rows
     .filter(row => !(forCustomer && row.kind === 'visibility'))
     .map(row => ({
       id: row.id,
       kind: row.kind,
-      detail: row.detail,
+      detail: readerDetail(row, forCustomer, row.detail.blockerId ? liveTitles.get(row.detail.blockerId) ?? null : null),
       via: row.via,
       actorId: row.actorId,
       actorName: row.actorId ? names.get(row.actorId) ?? null : null,
