@@ -61,7 +61,8 @@ export async function attachReplyPreviews<T extends { replyToId: string | null }
           body: taskComments.body,
           visibility: taskComments.visibility,
           userName: user.name,
-          keyName: apiKeys.name
+          keyName: apiKeys.name,
+          createdVia: taskComments.createdVia
         })
         .from(taskComments)
         .leftJoin(user, eq(user.id, taskComments.userId))
@@ -75,9 +76,15 @@ export async function attachReplyPreviews<T extends { replyToId: string | null }
   }))
 }
 
+// What a reader is told wrote an update. A GitHub copy is stored under the project owner's account,
+// so it reads as GitHub; every other update keeps the name of the person who posted it.
+export function signedName(row: { createdVia: string, userName: string | null }): string | null {
+  return row.createdVia === 'github' ? 'GitHub' : row.userName
+}
+
 export function buildReplyPreview(
   replyToId: string | null,
-  parents: Map<string, { id: string, body: string, visibility: string, userName: string | null, keyName: string | null }>,
+  parents: Map<string, { id: string, body: string, visibility: string, userName: string | null, keyName: string | null, createdVia?: string | null }>,
   audience: Audience
 ): ReplyPreview | null {
   if (!replyToId) return null
@@ -88,7 +95,8 @@ export function buildReplyPreview(
   if (audience === 'customer' && parent.visibility !== 'customer') return null
   return {
     id: parent.id,
-    authorName: parent.keyName ?? parent.userName ?? null,
+    // The GitHub sync's copies are signed with the owner's account, so they read as GitHub.
+    authorName: parent.keyName ?? signedName({ createdVia: parent.createdVia ?? 'ui', userName: parent.userName }),
     excerpt: plainExcerpt(parent.body),
     deleted: false
   }

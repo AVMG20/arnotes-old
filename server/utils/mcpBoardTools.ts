@@ -27,7 +27,7 @@ import { fireRules, newRuleChain } from './ruleEngine'
 import type { TriggerKind } from './ruleSpec'
 import { changesToTask, inboxBriefs, logActivity } from './taskActivity'
 import { checkFieldValues, describeFieldValues, listFields, loadFieldValues, setFieldValues } from './customFields'
-import { attachReplyPreviews } from './taskComments'
+import { attachReplyPreviews, signedName } from './taskComments'
 import { addBlocker, blockedState, blockedStatesOn, listBlockers, NOT_ON_BOARD, removeBlocker } from './taskDependencyService'
 import type { Actor, Tx } from './taskDependencyService'
 import { blockedMark, checkLinkCount, linkOrFail } from './mcpBlockerLinks'
@@ -422,7 +422,7 @@ async function taskDetail(task: ProjectTask, board: Project, context: ApiKeyCont
       id: update.id,
       author: update.createdVia === 'mcp'
         ? `${update.keyName ?? 'MCP key'} (agent)`
-        : update.authorName ?? 'Unknown',
+        : signedName({ createdVia: update.createdVia, userName: update.authorName }) ?? 'Unknown',
       body: update.body,
       at: new Date(update.createdAt).toISOString(),
       // The comment this one answers, as the app shows it (see taskComments.ts).

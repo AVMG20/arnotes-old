@@ -194,6 +194,9 @@ export type Visibility = typeof VISIBILITIES[number]
 // the user's own tidying apart from an agent's, and so a runaway MCP key's work
 // can be picked out and restored in one go.
 export const DELETION_SOURCES = ['ui', 'mcp', 'ai'] as const
+// Who wrote a task update: the same three, and GitHub for the card syncer's copies (no backfill: older copies keep the owner's name).
+export const COMMENT_SOURCES = ['ui', 'mcp', 'ai', 'github'] as const
+export type CommentSource = typeof COMMENT_SOURCES[number]
 // Where an activity line came from: the same three, and GitHub for the card syncer's lines.
 export const ACTIVITY_SOURCES = ['ui', 'mcp', 'ai', 'github'] as const
 export type ActivitySource = typeof ACTIVITY_SOURCES[number]
@@ -606,7 +609,7 @@ export const taskComments = pgTable(
     // Which door the update came through, the same three as a deletion. An
     // update posted by an agent is signed with the key's name rather than the
     // owner's, so a log the user reads back says who was really working.
-    createdVia: text('created_via').$type<DeletionSource>().notNull().default('ui'),
+    createdVia: text('created_via').$type<CommentSource>().notNull().default('ui'),
     apiKeyId: text('api_key_id').references(() => apiKeys.id, { onDelete: 'set null' }),
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     // Set when the author rewrote it, so the thread can say so.

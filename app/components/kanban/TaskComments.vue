@@ -4,6 +4,7 @@ import { relativeTime } from '~/composables/useRelativeTime'
 import type { TaskActivityItem, TaskComment, Visibility } from '~/composables/useProjects'
 import { dueDayToMs } from '~/utils/dueDate'
 import { commentLink, replyLineText } from '~/utils/taskComments'
+import { commentAuthorName, isGithubUpdate } from '~/utils/commentAuthor'
 
 // The conversation under a task's description: its comments and the log of what
 // happened to the task, oldest first, then the box that adds to them. The drawer
@@ -70,12 +71,11 @@ function isAgentUpdate(comment: TaskComment) {
 }
 
 function updateAuthor(comment: TaskComment) {
-  if (comment.createdVia === 'mcp') return comment.keyName ?? 'MCP key'
-  if (comment.createdVia === 'ai') return 'AI assistant'
-  return comment.userName ?? 'Unknown'
+  return commentAuthorName(comment)
 }
 
 function updateSourceLabel(comment: TaskComment) {
+  if (isGithubUpdate(comment)) return 'GitHub'
   return comment.createdVia === 'mcp' ? 'MCP' : 'AI'
 }
 
@@ -458,8 +458,8 @@ defineExpose({ handleEscape })
             :class="{ 'comment-highlight': highlightId === comment.id }"
           >
             <UAvatar
-              v-if="isAgentUpdate(comment)"
-              icon="i-lucide-bot"
+              v-if="isAgentUpdate(comment) || isGithubUpdate(comment)"
+              :icon="isGithubUpdate(comment) ? 'i-lucide-github' : 'i-lucide-bot'"
               size="2xs"
               class="mt-0.5 shrink-0"
             />
@@ -475,7 +475,7 @@ defineExpose({ handleEscape })
                   {{ updateAuthor(comment) }}
                 </span>
                 <span
-                  v-if="isAgentUpdate(comment)"
+                  v-if="isAgentUpdate(comment) || isGithubUpdate(comment)"
                   class="shrink-0 rounded px-1 py-px text-[0.625rem] font-semibold uppercase tracking-wide text-muted ring-1 ring-inset ring-accented"
                 >
                   {{ updateSourceLabel(comment) }}
