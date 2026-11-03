@@ -107,6 +107,12 @@ function startBoard() {
         return res.end('{"ok":true}')
       }
       if (url.pathname === '/api/auth/organization/set-active') return res.end('{}')
+      if (url.pathname === '/check') {
+        // The board's own check: the title says whether this request carries a session it issued.
+        const sid = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie ?? '')?.[1]
+        res.setHeader('content-type', 'text/html')
+        return res.end(`<!doctype html><title>${sessions.has(sid) ? 'session' : 'no session'}</title><p>check</p>`)
+      }
       if (url.pathname === '/page') {
         res.setHeader('content-type', 'text/html')
         return res.end('<!doctype html><title>Kit page</title><p>hello from the fake board</p>')
@@ -160,19 +166,22 @@ describe('crew <who> browser, end to end (real Chromium, fake board)', { skip: S
     const out = await crew(env, ['w1', 'browser', 'goto', `${base}/page`])
     assert.equal(out.code, 0, out.stderr)
     assert.equal(out.stdout, `${base}/page - Kit page`)
-    const cookie = await crew(env, ['w1', 'browser', 'eval', 'document.cookie'])
-    assert.match(cookie.stdout, /sid=/, 'w1 is signed in on the page')
+    const check = await crew(env, ['w1', 'browser', 'goto', `${base}/check`])
+    assert.equal(check.code, 0, check.stderr)
+    const title = await crew(env, ['w1', 'browser', 'eval', 'document.title'])
+    assert.equal(title.stdout, 'session', 'w1 is signed in, as the board sees it')
+    assert.equal(check.stdout, `${base}/check - session`)
     const tabs = await crew(env, ['w1', 'browser', 'tabs'])
     assert.equal(JSON.parse(tabs.stdout).includes('main'), true)
   })
 
   test('another person on the same origin has a login of their own', async () => {
-    const w1 = await crew(env, ['w1', 'browser', 'eval', 'document.cookie'])
-    const w2 = await crew(env, ['w2', 'browser', 'goto', `${base}/page`])
+    const w1 = await crew(env, ['w1', 'browser', 'eval', 'document.title'])
+    const w2 = await crew(env, ['w2', 'browser', 'goto', `${base}/check`])
     assert.equal(w2.code, 0, w2.stderr)
-    const w2cookie = await crew(env, ['w2', 'browser', 'eval', 'document.cookie'])
-    assert.match(w2cookie.stdout, /sid=/)
-    assert.notEqual(w2cookie.stdout, w1.stdout, 'two contexts, two sessions')
+    const w2title = await crew(env, ['w2', 'browser', 'eval', 'document.title'])
+    assert.equal(w2title.stdout, 'session', 'w2 is signed in, as the board sees it')
+    assert.equal(w1.stdout, 'session', 'w1 keeps her own login')
   })
 
   test('a failed sign-in is one line, and no password appears in it', async () => {
@@ -222,9 +231,9 @@ describe('crew <who> browser, end to end (real Chromium, fake board)', { skip: S
       if (Date.now() > until) assert.fail('the driver noticed the crash')
       await sleep(200)
     }
-    const out = await crew(env, ['w1', 'browser', 'eval', 'document.cookie'])
+    const out = await crew(env, ['w1', 'browser', 'goto', `${base}/check`])
     assert.equal(out.code, 0, out.stderr)
-    assert.match(out.stdout, /sid=/, 'signed in again')
+    assert.equal(out.stdout, `${base}/check - session`, 'signed in again')
     assert.match(out.stderr, /note: the shared browser stopped and was started again/)
     assert.match(out.stderr, /login was set up again/)
   })
@@ -282,7 +291,7 @@ describe('the board address and where a password may go', () => {
 })
 
 describe('a password goes only to the board', { skip: SKIP }, () => {
-  test('a page that has left the board gets no sign-in: neither site sees one', async () => {
+  test('the password goes only to the board, whatever page is open: the other site sees none', async () => {
     const board = await startBoard()
     const other = await startBoard()
     const dir = mkdtempSync(join(SCRATCH, 'kit-origin-'))
@@ -294,19 +303,17 @@ describe('a password goes only to the board', { skip: SKIP }, () => {
       dir,
       chromium: CHROMIUM,
       signals: false,
-      prepare: (who, call) => signIn(who, async (cmd, args) => {
-        // The page moves to another site before the sign-in script is sent.
-        if (cmd === 'eval') await call('goto', { url: `${otherBase}/page` })
-        return call(cmd, args)
-      }, creds)
+      prepare: async (who, call, session) => {
+        // The page is on another site when the sign-in runs: the password still goes only to the board.
+        await call('goto', { url: `${otherBase}/page` })
+        await signIn(who, session, creds)
+      }
     })
     try {
       await waitUntil(async () => (await request({ dir, cmd: 'status', start: false, seam: false })) !== null, 20000, 'the in-process driver')
-      await assert.rejects(
-        request({ dir, who: 'w1', cmd: 'goto', args: { url: `${boardBase}/page` }, start: false, seam: false }),
-        /could not sign in as w1: the page is not on the board, so nothing was sent/
-      )
-      assert.equal(board.signIns ?? 0, 0, 'the board saw no sign-in')
+      const went = await request({ dir, who: 'w1', cmd: 'goto', args: { url: `${boardBase}/page` }, start: false, seam: false })
+      assert.equal(went.result, `${boardBase}/page - Kit page`)
+      assert.equal(board.signIns, 1, 'the board saw the one sign-in')
       assert.equal(other.signIns ?? 0, 0, 'the other site saw no sign-in')
     } finally {
       await request({ dir, cmd: 'shutdown', start: false, seam: false }).catch(() => null)

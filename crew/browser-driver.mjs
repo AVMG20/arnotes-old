@@ -932,7 +932,9 @@ class Pool {
     person.context = browserContextId
     if (this.cfg.prepare) {
       try {
-        await this.cfg.prepare(person.who, (cmd, args = {}) => this.run(cmd, person, args))
+        await this.cfg.prepare(person.who, (cmd, args = {}) => this.run(cmd, person, args), {
+          setCookies: cookies => this.setCookies(person, cookies)
+        })
       } catch (e) {
         await this.release(person)
         throw e
@@ -1046,6 +1048,25 @@ class Pool {
     if (person.context && browser && browser === this.browser && browser.alive) {
       await browser.call('Target.disposeBrowserContext', { browserContextId: person.context }).catch(() => {})
     }
+  }
+
+  /**
+   * Sets cookies on one person's context and no other. Driver-internal: the login seam calls it
+   * through its session argument, and the call is not in the send allowlist. Each cookie needs a
+   * name, a value and an http or https URL; the values are never logged.
+   */
+  async setCookies(person, cookies) {
+    if (!Array.isArray(cookies) || cookies.length > 64) throw new BrowserError('cookies must be a list of 64 or fewer')
+    for (const cookie of cookies) {
+      const ok = cookie && typeof cookie.name === 'string' && typeof cookie.value === 'string'
+        && typeof cookie.url === 'string' && /^https?:\/\//.test(cookie.url)
+      if (!ok) throw new BrowserError('a cookie needs a name, a value and an http or https URL')
+    }
+    const browser = person.browser
+    if (!browser || browser !== this.browser || !browser.alive) {
+      throw new BrowserError('the shared browser stopped; try again')
+    }
+    await browser.call('Storage.setCookies', { cookies, browserContextId: person.context })
   }
 
   /** Answers one request: the person's note (if any) comes with it. */

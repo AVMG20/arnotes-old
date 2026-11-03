@@ -10,6 +10,8 @@
 //
 // The daemon loads prepare() from this file by its own path (no environment setting can change it).
 // This module has no side effects on import: config.mjs is loaded only when a command runs.
+// The team step is part of the login on purpose: a crew person who is not on the crew team is a setup
+// error, so a failed set-active fails the sign-in and the person gets no browser session.
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -57,41 +59,96 @@ export function boardOrigin(base) {
 }
 
 /**
- * Signs `who` in on the page the driver is showing, as tm.mjs does. The sign-in is sent only while the
- * page is on the board's origin: the page is checked in the same script that sends the password, and
- * the request does not follow a redirect. Nothing is printed but the status.
+ * Reads one Set-Cookie line as the cookie the driver sets. The board's origin is the URL, so Chromium
+ * keeps the host and the scheme rules; a Domain attribute is ignored. A __Host- cookie is dropped unless it is
+ * Secure, has Path=/ and no Domain: Chromium would drop it silently, so the driver is not asked to set it.
  */
-export async function signIn(who, call, creds) {
+export function parseSetCookie(line, origin, now = Date.now()) {
+  const [pair, ...attributes] = String(line).split(';')
+  const eq = pair.indexOf('=')
+  if (eq <= 0) return null
+  const cookie = { name: pair.slice(0, eq).trim(), value: pair.slice(eq + 1).trim(), url: origin, path: '/', httpOnly: false, secure: false, sameSite: 'Lax', expires: -1 }
+  let hasDomain = false
+  for (const attribute of attributes) {
+    const eqAt = attribute.indexOf('=')
+    const key = (eqAt < 0 ? attribute : attribute.slice(0, eqAt)).trim().toLowerCase()
+    const value = eqAt < 0 ? '' : attribute.slice(eqAt + 1).trim()
+    if (key === 'domain') hasDomain = true
+    else if (key === 'path' && value.startsWith('/')) cookie.path = value
+    else if (key === 'httponly') cookie.httpOnly = true
+    else if (key === 'secure') cookie.secure = true
+    else if (key === 'samesite') cookie.sameSite = { strict: 'Strict', lax: 'Lax', none: 'None' }[value.toLowerCase()] ?? cookie.sameSite
+    else if (key === 'max-age' && Number.isFinite(Number(value))) cookie.expires = now / 1000 + Number(value)
+    else if (key === 'expires' && cookie.expires === -1 && !Number.isNaN(Date.parse(value))) cookie.expires = Date.parse(value) / 1000
+  }
+  if (!cookie.name) return null
+  if (cookie.name.startsWith('__Host-') && (!cookie.secure || cookie.path !== '/' || hasDomain)) return null
+  return cookie
+}
+
+/** Adds the cookies of one answer to the jar, by name: a later cookie with the same name replaces it. */
+function addCookies(jar, lines, origin) {
+  for (const line of lines) {
+    const cookie = parseSetCookie(line, origin)
+    if (cookie) jar.set(cookie.name, cookie)
+  }
+  return jar
+}
+
+const CALL_MS = 30000
+
+/**
+ * One POST from Node to the board. A redirect is refused, not followed. Only the status and the
+ * Set-Cookie lines come back: the body is never read, logged or kept. Network errors name their code only.
+ */
+async function post(origin, path, payload, jar) {
+  const headers = { 'content-type': 'application/json', origin }
+  if (jar.size) headers.cookie = [...jar.values()].map(cookie => `${cookie.name}=${cookie.value}`).join('; ')
+  let response
+  try {
+    response = await fetch(`${origin}${path}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(CALL_MS)
+    })
+  } catch (e) {
+    throw new BrowserError(`could not reach the board (${e.cause?.code ?? e.name})`)
+  }
+  await response.body?.cancel().catch(() => {})
+  if (response.status >= 300 && response.status < 400) {
+    throw new BrowserError(`the board answered with a redirect (HTTP ${response.status}), so the sign-in was refused`)
+  }
+  return { status: response.status, setCookie: response.headers.getSetCookie() }
+}
+
+/**
+ * Signs `who` in from Node, as tm.mjs does, then the team set-active step, and hands the board's
+ * session cookies to `session.setCookies`, which sets them on that person's context only. No page runs
+ * the request, so a script on the page cannot see the password. Nothing is printed but the status.
+ */
+export async function signIn(who, session, creds) {
   const me = creds.people?.[who]
   if (!me?.email || !me?.password) throw new BrowserError(`${who} has no login in creds.json`)
   const origin = boardOrigin(creds.base)
-  await call('goto', { url: `${origin}/api/auth/get-session` })
-  const body = JSON.stringify({ email: me.email, password: me.password })
+  const signed = await post(origin, '/api/auth/sign-in/email', { email: me.email, password: me.password }, new Map())
+  if (signed.status !== 200) throw new BrowserError(`could not sign in as ${who} (HTTP ${signed.status})`)
+  const jar = addCookies(new Map(), signed.setCookie, origin)
   const team = typeof creds.team?.id === 'string' ? creds.team.id : ''
-  const script = `(async () => {
-    if (location.origin !== ${JSON.stringify(origin)}) return 'off the board'
-    const headers = { 'content-type': 'application/json' }
-    const signIn = await fetch(${JSON.stringify(`${origin}/api/auth/sign-in/email`)}, { method: 'POST', headers, body: ${JSON.stringify(body)}, redirect: 'error' })
-    if (signIn.status !== 200) return 'refused ' + signIn.status
-    if (${JSON.stringify(team)}) {
-      await fetch(${JSON.stringify(`${origin}/api/auth/organization/set-active`)}, { method: 'POST', headers, body: JSON.stringify({ organizationId: ${JSON.stringify(team)} }), redirect: 'error' })
-    }
-    return 'ok'
-  })()`
-  const answer = await call('eval', { js: script })
-  if (answer === 'ok') return
-  if (answer === 'off the board') {
-    throw new BrowserError(`could not sign in as ${who}: the page is not on the board, so nothing was sent`)
+  if (team) {
+    const active = await post(origin, '/api/auth/organization/set-active', { organizationId: team }, jar)
+    if (active.status !== 200) throw new BrowserError(`could not set the team for ${who} (HTTP ${active.status})`)
+    addCookies(jar, active.setCookie, origin)
   }
-  const code = typeof answer === 'string' ? answer.replace(/^refused /, '') : ''
-  throw new BrowserError(`could not sign in as ${who}${code ? ` (HTTP ${code})` : ''}`)
+  if (jar.size === 0) throw new BrowserError(`could not sign in as ${who}: the board sent no session`)
+  await session.setCookies([...jar.values()])
 }
 
 /** The driver runs this once per new context, before the person's first command. */
-export async function prepare(who, call) {
-  return signIn(who, call, await readCreds())
+export async function prepare(who, _call, session) {
+  return signIn(who, session, await readCreds())
 }
-
 /** Runs one browser command from the arguments after `browser`. Prints the result, or the note. */
 export async function main(argv) {
   const parsed = parseCli(argv)
