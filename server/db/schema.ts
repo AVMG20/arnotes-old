@@ -341,7 +341,7 @@ export const projectTasks = pgTable(
 // finished, moved, rescheduled, given to someone. `detail` holds the words the
 // entry needs (names, not ids) so it still reads right after a column or a
 // person is gone.
-export const TASK_ACTIVITY_KINDS = ['created', 'completed', 'reopened', 'moved', 'assigned', 'unassigned', 'due', 'start', 'renamed', 'visibility', 'label'] as const
+export const TASK_ACTIVITY_KINDS = ['created', 'completed', 'reopened', 'moved', 'assigned', 'unassigned', 'due', 'start', 'renamed', 'visibility', 'label', 'blocker_added', 'blocker_removed'] as const
 export type TaskActivityKind = typeof TASK_ACTIVITY_KINDS[number]
 
 export const taskActivity = pgTable(

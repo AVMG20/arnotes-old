@@ -90,7 +90,9 @@ const ACTIVITY_ICONS: Record<TaskActivityItem['kind'], string> = {
   start: 'i-lucide-calendar-clock',
   renamed: 'i-lucide-pencil',
   visibility: 'i-lucide-eye',
-  label: 'i-lucide-tag'
+  label: 'i-lucide-tag',
+  blocker_added: 'i-lucide-link',
+  blocker_removed: 'i-lucide-unlink'
 }
 
 function activityIcon(kind: TaskActivityItem['kind']) {
@@ -123,6 +125,8 @@ function activityText(item: TaskActivityItem) {
     case 'start': return to ? `set the start date to ${activityDay(to)}${how}` : `cleared the start date${how}`
     case 'renamed': return `renamed this task to “${to}”${how}`
     case 'visibility': return `made this task ${to}${how}`
+    case 'blocker_added': return `made this task wait for “${to}”${how}`
+    case 'blocker_removed': return `no longer waits for “${from}”${how}`
     case 'label': return from ? `removed the label “${from}”` : `added the label “${to}”`
   }
 }

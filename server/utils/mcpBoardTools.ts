@@ -1277,7 +1277,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       const blockers = await blockerIdsOn(args, 'blockedBy', board, context)
       const now = Date.now()
 
-      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board) }
+      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board), via: 'mcp' }
       // The task and its blocked-by links are one write: a refused link leaves no task behind.
       const [task] = await db.transaction(async (tx) => {
         const created = await tx.insert(projectTasks).values({
@@ -1351,7 +1351,7 @@ export const MCP_BOARD_TOOLS: McpToolDefinition[] = [
       // The links and the save are one write: a refused link leaves the task as it was.
       const adds = await blockerIdsOn(args, 'blockedBy', board, context)
       const removes = await blockerIdsOn(args, 'unblockedBy', board, context, { deleted: true })
-      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board) }
+      const actor: Actor = { userId: context.userId, audience: audienceOf(context, board), via: 'mcp' }
       const [updated] = await db.transaction(async (tx) => {
         await changeBlockers(tx, board, task.id, actor, adds, removes)
         return await tx

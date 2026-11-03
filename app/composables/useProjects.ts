@@ -118,7 +118,7 @@ export interface CommentReplyPreview {
 // One line of a task's log: made, finished, moved, rescheduled, given to someone.
 export interface TaskActivityItem {
   id: string
-  kind: 'created' | 'completed' | 'reopened' | 'moved' | 'assigned' | 'unassigned' | 'due' | 'start' | 'renamed' | 'visibility' | 'label'
+  kind: 'created' | 'completed' | 'reopened' | 'moved' | 'assigned' | 'unassigned' | 'due' | 'start' | 'renamed' | 'visibility' | 'label' | 'blocker_added' | 'blocker_removed'
   detail: Record<string, string | null>
   via: ActivitySource
   actorId: string | null
