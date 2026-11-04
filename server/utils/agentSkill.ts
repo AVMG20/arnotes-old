@@ -128,9 +128,13 @@ look for another route to it.
 
 ## Reading a long thread
 
-\`get_task\` returns the whole thread unless you ask for less. On a long one, read the latest updates first and fetch the whole thread only when you need it. One example per option:
+\`get_task\` returns the last 5 updates by default to keep context lean. Cache what you read: do not fetch again if you already have the task in your context, only when that context is stale. When you fetch, use \`since\` with the last update's id to get only what is new since your last read.
 
-- \`limit\`: \`{"id": "<task id>", "limit": 5}\` gives the five oldest updates; with \`"order": "newest"\` it gives the five newest.
+First read with no filters (or \`limit: 5, order: newest\` to start with the latest). Cache the last update's id. On your next read of the same task, always pass \`since: <last update id>\` to fetch only new updates. This keeps old comments from bloating context.
+
+When you need more of the thread — because you are missing context or need to search it — use these options:
+
+- \`limit\`: \`{"id": "<task id>", "limit": 50}\` gets the fifty oldest updates; with \`"order": "newest"\` it gets the fifty newest.
 - \`order\`: \`{"id": "<task id>", "order": "newest"}\` lists the thread newest first. The default is \`"oldest"\`.
 - \`since\`: \`{"id": "<task id>", "since": "2026-11-02T10:00:00Z"}\` gives the updates strictly after that time. The time must be a full ISO 8601 time with a zone; an update id works too.
 - \`prefix\`: \`{"id": "<task id>", "prefix": "NITPICKER:"}\` gives the updates whose body starts with that text, ignoring case.

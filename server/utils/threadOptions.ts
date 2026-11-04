@@ -76,9 +76,9 @@ function threadText(args: Record<string, unknown>, key: string, hint: string): s
 export function readThreadOptions(args: Record<string, unknown>): ThreadOptions {
   const limit = args.limit as number | null | undefined
   if (limit !== undefined && limit !== null && (!Number.isInteger(limit) || limit < 1 || limit > 200)) {
-    throw new McpToolError('"limit" must be a whole number from 1 to 200, or left out to get every update.')
+    throw new McpToolError('"limit" must be a whole number from 1 to 200, or left out to get the last 5 updates.')
   }
-  const order = args.order ?? 'oldest'
+  const order = args.order ?? 'newest'
   if (typeof order !== 'string' || !(THREAD_ORDERS as readonly string[]).includes(order)) {
     throw new McpToolError('"order" must be "oldest" or "newest".')
   }
@@ -88,7 +88,7 @@ export function readThreadOptions(args: Record<string, unknown>): ThreadOptions 
     throw new McpToolError(SINCE_REFUSAL)
   }
   return {
-    limit: limit ?? undefined,
+    limit: limit ?? 5,
     order: order as ThreadOptions['order'],
     since,
     prefix: threadText(args, 'prefix', PREFIX_HINT)
